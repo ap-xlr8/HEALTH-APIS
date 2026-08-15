@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -35,7 +36,7 @@ func TestRunWritesParseableLocalEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat returned error: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("expected 0600 permissions, got %v", info.Mode().Perm())
 	}
 }

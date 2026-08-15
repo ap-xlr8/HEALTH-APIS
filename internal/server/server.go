@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"healthos/backend/internal/alerts"
 	"healthos/backend/internal/authz"
@@ -22,6 +23,8 @@ import (
 	"healthos/backend/internal/store"
 	"healthos/backend/internal/subscriptions"
 	"healthos/backend/internal/support"
+	"healthos/backend/pkg/email"
+	"healthos/backend/pkg/httpx"
 )
 
 type Server struct {
@@ -44,18 +47,20 @@ type Server struct {
 	realtime      *realtime.Hub
 	subscriptions subscriptions.Handler
 	breakglass    breakglass.Handler
+	startTime     time.Time
 }
 
 func New(cfg config.Config, logger *slog.Logger, mongoStore *store.Mongo) (*Server, error) {
 	authzMiddleware := authz.New(cfg.JWTPublicKey, mongoStore)
 	hub := realtime.New(logger)
+	emailClient := email.NewSendGridClient(cfg.SendGridAPIKey, cfg.SendGridFromEmail, cfg.SendGridFromName)
 	return &Server{
 		cfg:           cfg,
 		logger:        logger,
 		store:         mongoStore,
 		authz:         authzMiddleware,
 		limiter:       NewRateLimiter(),
-		identity:      identity.New(mongoStore, cfg.JWTPrivateKey, cfg.JWTPublicKey),
+		identity:      identity.New(mongoStore, cfg.JWTPrivateKey, cfg.JWTPublicKey, emailClient),
 		health:        health.New(mongoStore, hub),
 		alerts:        alerts.New(mongoStore),
 		patients:      patients.New(mongoStore),
@@ -69,6 +74,7 @@ func New(cfg config.Config, logger *slog.Logger, mongoStore *store.Mongo) (*Serv
 		realtime:      hub,
 		subscriptions: subscriptions.New(mongoStore, cfg.StripeWebhookSecret),
 		breakglass:    breakglass.New(mongoStore),
+		startTime:     time.Now().UTC(),
 	}, nil
 }
 
@@ -76,6 +82,25 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.store.Ping(r.Context()); err != nil {
+			httpx.WriteError(w, http.StatusServiceUnavailable, "database connection unhealthy")
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status": "ready",
+			"checks": map[string]string{
+				"database": "connected",
+			},
+		})
+	})
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status":         "success",
+			"uptime_seconds": time.Since(s.startTime).Seconds(),
+			"environment":    s.cfg.Env,
+		})
 	})
 	mux.HandleFunc("GET /v1/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "api/openapi/openapi.yaml")
@@ -92,6 +117,7 @@ func (s *Server) Routes() http.Handler {
 	}
 
 	mux.Handle("POST /v1/auth/register", authLimit(http.HandlerFunc(s.identity.Register)))
+	mux.Handle("POST /v1/auth/verify-email", authLimit(http.HandlerFunc(s.identity.VerifyEmail)))
 	mux.Handle("POST /v1/auth/login", authLimit(http.HandlerFunc(s.identity.LoginMobile)))
 	mux.Handle("POST /v1/auth/web/login", authLimit(http.HandlerFunc(s.identity.LoginWeb)))
 	mux.Handle("POST /v1/auth/refresh", authLimit(http.HandlerFunc(s.identity.Refresh)))
@@ -114,7 +140,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.Handle("POST /v1/sync/measurements", protected(s.authz.Authorize(
 		"health_measurements",
-		models.ScopeReadMeasurements,
+		models.ScopeWriteMeasurements,
 		[]string{models.RolePatient},
 		func(r *http.Request) string {
 			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
@@ -162,7 +188,7 @@ func (s *Server) Routes() http.Handler {
 	)))
 	mux.Handle("POST /v1/patients/{id}/clinical-records", protected(s.authz.Authorize(
 		"clinical_records",
-		models.ScopeReadPatient,
+		models.ScopeWriteClinical,
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return r.PathValue("id") },
 		http.HandlerFunc(s.clinical.CreateClinicalRecord),
@@ -176,7 +202,7 @@ func (s *Server) Routes() http.Handler {
 	)))
 	mux.Handle("POST /v1/patients/{id}/medications", protected(s.authz.Authorize(
 		"medications",
-		models.ScopeReadPatient,
+		models.ScopeWriteMedications,
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return r.PathValue("id") },
 		http.HandlerFunc(s.clinical.CreateMedication),
@@ -190,14 +216,14 @@ func (s *Server) Routes() http.Handler {
 	)))
 	mux.Handle("POST /v1/patients/{id}/medication-logs", protected(s.authz.Authorize(
 		"medication_logs",
-		models.ScopeReadPatient,
+		models.ScopeWriteMedications,
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return r.PathValue("id") },
 		http.HandlerFunc(s.clinical.RecordMedicationLog),
 	)))
 	mux.Handle("POST /v1/patients/{id}/reports", protected(s.authz.Authorize(
 		"reports",
-		models.ScopeReadPatient,
+		models.ScopeWriteReports,
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return r.PathValue("id") },
 		http.HandlerFunc(s.reports.Create),
@@ -211,7 +237,7 @@ func (s *Server) Routes() http.Handler {
 	)))
 	mux.Handle("POST /v1/consents", protected(s.authz.Authorize(
 		"consents",
-		models.ScopeReadPatient,
+		models.ScopeWriteConsent,
 		[]string{models.RolePatient},
 		func(r *http.Request) string {
 			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
@@ -223,7 +249,7 @@ func (s *Server) Routes() http.Handler {
 	)))
 	mux.Handle("DELETE /v1/consents/{caregiver_id}", protected(s.authz.Authorize(
 		"consents",
-		models.ScopeReadPatient,
+		models.ScopeWriteConsent,
 		[]string{models.RolePatient},
 		func(r *http.Request) string {
 			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
@@ -235,7 +261,7 @@ func (s *Server) Routes() http.Handler {
 	)))
 	mux.Handle("POST /v1/relationships", protected(s.authz.Authorize(
 		"relationships",
-		models.ScopeReadPatient,
+		models.ScopeWritePatient,
 		[]string{models.RolePatient},
 		func(r *http.Request) string {
 			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
@@ -247,7 +273,7 @@ func (s *Server) Routes() http.Handler {
 	)))
 	mux.Handle("DELETE /v1/relationships/{caregiver_id}", protected(s.authz.Authorize(
 		"relationships",
-		models.ScopeReadPatient,
+		models.ScopeWritePatient,
 		[]string{models.RolePatient},
 		func(r *http.Request) string {
 			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
@@ -266,7 +292,7 @@ func (s *Server) Routes() http.Handler {
 	)))
 	mux.Handle("POST /v1/devices", protected(s.authz.Authorize(
 		"devices",
-		models.ScopeReadPatient,
+		models.ScopeWriteDevices,
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.devices.RegisterWearable),
@@ -280,28 +306,28 @@ func (s *Server) Routes() http.Handler {
 	)))
 	mux.Handle("POST /v1/devices/{id}/transfer-requests", protected(s.authz.Authorize(
 		"device_transfer_requests",
-		models.ScopeReadPatient,
+		models.ScopeWriteDevices,
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.devices.RequestTransfer),
 	)))
 	mux.Handle("POST /v1/device-transfer-requests/{id}/approve", protected(s.authz.Authorize(
 		"device_transfer_requests",
-		models.ScopeReadPatient,
+		models.ScopeWriteDevices,
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.devices.ApproveTransfer),
 	)))
 	mux.Handle("POST /v1/device-transfer-requests/{id}/reject", protected(s.authz.Authorize(
 		"device_transfer_requests",
-		models.ScopeReadPatient,
+		models.ScopeWriteDevices,
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.devices.RejectTransfer),
 	)))
 	mux.Handle("POST /v1/notifications", protected(s.authz.Authorize(
 		"notifications",
-		models.ScopeReadPatient,
+		models.ScopeWritePatient,
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.notifications.Create),
@@ -315,7 +341,7 @@ func (s *Server) Routes() http.Handler {
 	)))
 	mux.Handle("POST /v1/support-tickets", protected(s.authz.Authorize(
 		"support_tickets",
-		models.ScopeReadPatient,
+		models.ScopeWritePatient,
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.support.Create),

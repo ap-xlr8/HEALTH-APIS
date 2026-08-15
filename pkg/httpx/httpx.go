@@ -10,9 +10,15 @@ import (
 
 const maxJSONBodyBytes = 1 << 20
 
-type ErrorResponse struct {
-	Status  string `json:"status"`
+type ErrorDetail struct {
+	Code    string `json:"code,omitempty"`
 	Message string `json:"message"`
+}
+
+type ErrorResponse struct {
+	Status  string       `json:"status"`
+	Message string       `json:"message"`
+	Error   *ErrorDetail `json:"error,omitempty"`
 }
 
 func DecodeJSON(r *http.Request, dst any) error {
@@ -35,7 +41,15 @@ func WriteJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func WriteError(w http.ResponseWriter, status int, message string) {
-	WriteJSON(w, status, ErrorResponse{Status: "error", Message: message})
+	code := strings.ToLower(strings.ReplaceAll(http.StatusText(status), " ", "_"))
+	WriteJSON(w, status, ErrorResponse{
+		Status:  "error",
+		Message: message,
+		Error: &ErrorDetail{
+			Code:    code,
+			Message: message,
+		},
+	})
 }
 
 func BearerToken(r *http.Request) string {

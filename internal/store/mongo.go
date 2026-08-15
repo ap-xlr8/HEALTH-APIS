@@ -625,6 +625,69 @@ func (m *Mongo) ApproveBreakGlassRequest(ctx context.Context, id, approverID str
 	return request, normalizeFindErr(err)
 }
 
+func (m *Mongo) Ping(ctx context.Context) error {
+	return m.client.Ping(ctx, nil)
+}
+
+func (m *Mongo) FindDeviceByID(ctx context.Context, id string) (models.Device, error) {
+	var device models.Device
+	err := m.db.Collection("devices").FindOne(ctx, bson.M{"_id": id}).Decode(&device)
+	return device, normalizeFindErr(err)
+}
+
+func (m *Mongo) FindUserByVerificationToken(ctx context.Context, token string) (models.User, error) {
+	var user models.User
+	err := m.db.Collection("users").FindOne(ctx, bson.M{"verification_token": token}).Decode(&user)
+	return user, normalizeFindErr(err)
+}
+
+func (m *Mongo) VerifyUserEmail(ctx context.Context, token string) (models.User, error) {
+	now := time.Now().UTC()
+	filter := bson.M{
+		"verification_token": token,
+		"$or": []bson.M{
+			{"verification_expires_at": bson.M{"$exists": false}},
+			{"verification_expires_at": nil},
+			{"verification_expires_at": bson.M{"$gt": now}},
+		},
+	}
+	update := bson.M{
+		"$set": bson.M{
+			"email_verified": true,
+		},
+		"$unset": bson.M{
+			"verification_token":      "",
+			"verification_expires_at": "",
+		},
+	}
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
+	var user models.User
+	err := m.db.Collection("users").FindOneAndUpdate(ctx, filter, update, opts).Decode(&user)
+	return user, normalizeFindErr(err)
+}
+
+func (m *Mongo) UpdateUserFailedLogins(ctx context.Context, userID string, attempts int, lockoutUntil *time.Time) error {
+	update := bson.M{
+		"$set": bson.M{
+			"failed_login_attempts": attempts,
+			"lockout_until":          lockoutUntil,
+		},
+	}
+	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
+	return err
+}
+
+func (m *Mongo) ResetUserFailedLogins(ctx context.Context, userID string) error {
+	update := bson.M{
+		"$set": bson.M{
+			"failed_login_attempts": 0,
+			"lockout_until":          nil,
+		},
+	}
+	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
+	return err
+}
+
 func normalizeFindErr(err error) error {
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return ErrNotFound

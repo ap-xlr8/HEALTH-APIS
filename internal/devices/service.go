@@ -13,6 +13,7 @@ import (
 
 type Store interface {
 	CreateDevice(ctx context.Context, device models.Device) error
+	FindDeviceByID(ctx context.Context, id string) (models.Device, error)
 	CreateDeviceTransferRequest(ctx context.Context, request models.DeviceTransferRequest) error
 	FindDeviceTransferRequestByID(ctx context.Context, id string) (models.DeviceTransferRequest, error)
 	UpdateDeviceTransferRequestStatus(ctx context.Context, id, status string, updatedAt time.Time) (models.DeviceTransferRequest, error)
@@ -69,6 +70,18 @@ func (s Service) RequestTransfer(ctx context.Context, deviceID, fromOwnerID, toO
 	if fromOwnerID == toOwnerID {
 		return models.DeviceTransferRequest{}, errors.New("device transfer requires different owners")
 	}
+
+	device, err := s.store.FindDeviceByID(ctx, deviceID)
+	if err != nil {
+		return models.DeviceTransferRequest{}, errors.New("device not found")
+	}
+	if device.OwnerID != fromOwnerID {
+		return models.DeviceTransferRequest{}, errors.New("device does not belong to the requesting owner")
+	}
+	if device.Status != "active" {
+		return models.DeviceTransferRequest{}, errors.New("only active devices can be transferred")
+	}
+
 	now := time.Now().UTC()
 	request := models.DeviceTransferRequest{
 		ID:          "dtr_" + uuid.NewString(),

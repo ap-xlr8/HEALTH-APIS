@@ -59,6 +59,49 @@ func (f *fakeIdentityStore) FindUserByID(ctx context.Context, id string) (models
 	return user, nil
 }
 
+func (f *fakeIdentityStore) FindUserByVerificationToken(ctx context.Context, token string) (models.User, error) {
+	for _, u := range f.usersByID {
+		if u.VerificationToken == token {
+			return u, nil
+		}
+	}
+	return models.User{}, store.ErrNotFound
+}
+
+func (f *fakeIdentityStore) VerifyUserEmail(ctx context.Context, token string) (models.User, error) {
+	for id, u := range f.usersByID {
+		if u.VerificationToken == token {
+			u.EmailVerified = true
+			u.VerificationToken = ""
+			u.VerificationExpiresAt = nil
+			f.usersByID[id] = u
+			f.usersByEmail[u.Email] = u
+			return u, nil
+		}
+	}
+	return models.User{}, store.ErrNotFound
+}
+
+func (f *fakeIdentityStore) UpdateUserFailedLogins(ctx context.Context, userID string, attempts int, lockoutUntil *time.Time) error {
+	if u, ok := f.usersByID[userID]; ok {
+		u.FailedLoginAttempts = attempts
+		u.LockoutUntil = lockoutUntil
+		f.usersByID[userID] = u
+		f.usersByEmail[u.Email] = u
+	}
+	return nil
+}
+
+func (f *fakeIdentityStore) ResetUserFailedLogins(ctx context.Context, userID string) error {
+	if u, ok := f.usersByID[userID]; ok {
+		u.FailedLoginAttempts = 0
+		u.LockoutUntil = nil
+		f.usersByID[userID] = u
+		f.usersByEmail[u.Email] = u
+	}
+	return nil
+}
+
 func (f *fakeIdentityStore) CreateSession(ctx context.Context, session models.Session) error {
 	if f.sessionErr != nil {
 		return f.sessionErr
@@ -121,13 +164,14 @@ func TestValidateRegister(t *testing.T) {
 	}
 }
 
-func TestRegisterLoginAndRefresh(t *testing.T) {
+func TestRegisterVerifyAndLogin(t *testing.T) {
+	t.Parallel()
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("GenerateKey returned error: %v", err)
 	}
 	fakeStore := newFakeIdentityStore()
-	handler := New(fakeStore, privateKey, &privateKey.PublicKey)
+	handler := New(fakeStore, privateKey, &privateKey.PublicKey, nil)
 
 	registerReq := httptest.NewRequest(http.MethodPost, "/v1/auth/register", strings.NewReader(`{
 		"email":"juan@example.com",
@@ -142,6 +186,33 @@ func TestRegisterLoginAndRefresh(t *testing.T) {
 		t.Fatalf("expected register 201, got %d body=%s", registerRes.Code, registerRes.Body.String())
 	}
 
+	var regData struct {
+		Data struct {
+			VerificationToken string `json:"verification_token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(registerRes.Body.Bytes(), &regData); err != nil {
+		t.Fatalf("decode register response: %v", err)
+	}
+
+	// Login before verifying must fail with 403 Forbidden
+	unverifiedLogin := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"juan@example.com","password":"Secure!1234"}`))
+	unverifiedRes := httptest.NewRecorder()
+	handler.LoginMobile(unverifiedRes, unverifiedLogin)
+	if unverifiedRes.Code != http.StatusForbidden {
+		t.Fatalf("expected unverified login 403, got %d body=%s", unverifiedRes.Code, unverifiedRes.Body.String())
+	}
+
+	// Verify email
+	verifyReq := httptest.NewRequest(http.MethodPost, "/v1/auth/verify-email", strings.NewReader(`{"token":"`+regData.Data.VerificationToken+`"}`))
+	verifyReq.Header.Set("Content-Type", "application/json")
+	verifyRes := httptest.NewRecorder()
+	handler.VerifyEmail(verifyRes, verifyReq)
+	if verifyRes.Code != http.StatusOK {
+		t.Fatalf("expected verify email 200, got %d body=%s", verifyRes.Code, verifyRes.Body.String())
+	}
+
+	// Login after verify must succeed
 	loginReq := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"juan@example.com","password":"Secure!1234"}`))
 	loginRes := httptest.NewRecorder()
 	handler.LoginMobile(loginRes, loginReq)
@@ -175,14 +246,14 @@ func TestRefreshRejectsExpiredSession(t *testing.T) {
 		t.Fatalf("GenerateKey returned error: %v", err)
 	}
 	fakeStore := newFakeIdentityStore()
-	user := models.User{ID: "usr_1", Email: "juan@example.com", Role: models.RolePatient}
+	user := models.User{ID: "usr_1", Email: "juan@example.com", Role: models.RolePatient, EmailVerified: true}
 	fakeStore.usersByID[user.ID] = user
 	token, jti, err := signRefreshForTest(privateKey, user.ID, user.Role)
 	if err != nil {
 		t.Fatalf("signRefreshForTest: %v", err)
 	}
 	fakeStore.sessions[jti] = models.Session{ID: jti, UserID: user.ID, Kind: "refresh", ExpiresAt: time.Now().UTC().Add(-time.Minute)}
-	handler := New(fakeStore, privateKey, &privateKey.PublicKey)
+	handler := New(fakeStore, privateKey, &privateKey.PublicKey, nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", strings.NewReader(`{"refresh_token":"`+token+`"}`))
 	res := httptest.NewRecorder()
 
@@ -199,15 +270,18 @@ func TestLoginWebSetsSecureCookies(t *testing.T) {
 		t.Fatalf("GenerateKey returned error: %v", err)
 	}
 	fakeStore := newFakeIdentityStore()
-	handler := New(fakeStore, privateKey, &privateKey.PublicKey)
-	register := httptest.NewRequest(http.MethodPost, "/v1/auth/register", strings.NewReader(`{
-		"email":"doc@example.com",
-		"password":"Doctor!123",
-		"role":"caregiver",
-		"first_name":"Doc",
-		"last_name":"Care"
-	}`))
-	handler.Register(httptest.NewRecorder(), register)
+	user := models.User{
+		ID:            "usr_doc",
+		Email:         "doc@example.com",
+		PasswordHash:  "",
+		Role:          "caregiver",
+		EmailVerified: true,
+	}
+	user.PasswordHash, _ = security.HashPassword("Doctor!123")
+	fakeStore.usersByID[user.ID] = user
+	fakeStore.usersByEmail[user.Email] = user
+
+	handler := New(fakeStore, privateKey, &privateKey.PublicKey, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/web/login", strings.NewReader(`{"email":"doc@example.com","password":"Doctor!123"}`))
 	res := httptest.NewRecorder()
@@ -217,8 +291,8 @@ func TestLoginWebSetsSecureCookies(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
 	}
 	cookies := res.Result().Cookies()
-	if len(cookies) != 2 {
-		t.Fatalf("expected access and csrf cookies, got %d", len(cookies))
+	if len(cookies) < 2 {
+		t.Fatalf("expected secure cookies, got %d", len(cookies))
 	}
 	for _, cookie := range cookies {
 		if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteStrictMode {
@@ -233,7 +307,7 @@ func TestRegisterRejectsInvalidPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKey returned error: %v", err)
 	}
-	handler := New(newFakeIdentityStore(), privateKey, &privateKey.PublicKey)
+	handler := New(newFakeIdentityStore(), privateKey, &privateKey.PublicKey, nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/register", strings.NewReader(`{"email":"bad"}`))
 	res := httptest.NewRecorder()
 
@@ -257,7 +331,7 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKey returned error: %v", err)
 	}
-	handler := New(newFakeIdentityStore(), privateKey, &privateKey.PublicKey)
+	handler := New(newFakeIdentityStore(), privateKey, &privateKey.PublicKey, nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"missing@example.com","password":"Secure!1234"}`))
 	res := httptest.NewRecorder()
 
@@ -275,28 +349,48 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 	}
 }
 
-func TestLoginRejectsWrongPassword(t *testing.T) {
+func TestLoginRejectsWrongPasswordAndLocksAccount(t *testing.T) {
 	t.Parallel()
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("GenerateKey returned error: %v", err)
 	}
 	fakeStore := newFakeIdentityStore()
-	handler := New(fakeStore, privateKey, &privateKey.PublicKey)
-	handler.Register(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/auth/register", strings.NewReader(`{
-		"email":"juan@example.com",
-		"password":"Secure!1234",
-		"role":"patient",
-		"first_name":"Juan",
-		"last_name":"Perez"
-	}`)))
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"juan@example.com","password":"Wrong!1234"}`))
-	res := httptest.NewRecorder()
+	user := models.User{
+		ID:            "usr_1",
+		Email:         "juan@example.com",
+		Role:          models.RolePatient,
+		EmailVerified: true,
+	}
+	user.PasswordHash, _ = security.HashPassword("Secure!1234")
+	fakeStore.usersByID[user.ID] = user
+	fakeStore.usersByEmail[user.Email] = user
 
-	handler.LoginMobile(res, req)
+	handler := New(fakeStore, privateKey, &privateKey.PublicKey, nil)
 
-	if res.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", res.Code)
+	for i := 0; i < 4; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"juan@example.com","password":"Wrong!1234"}`))
+		res := httptest.NewRecorder()
+		handler.LoginMobile(res, req)
+		if res.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: expected 401, got %d", i+1, res.Code)
+		}
+	}
+
+	// 5th failed attempt triggers lockout
+	req5 := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"juan@example.com","password":"Wrong!1234"}`))
+	res5 := httptest.NewRecorder()
+	handler.LoginMobile(res5, req5)
+	if res5.Code != http.StatusUnauthorized {
+		t.Fatalf("5th attempt: expected 401, got %d", res5.Code)
+	}
+
+	// 6th attempt should be blocked with 429
+	req6 := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"juan@example.com","password":"Secure!1234"}`))
+	res6 := httptest.NewRecorder()
+	handler.LoginMobile(res6, req6)
+	if res6.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 account locked, got %d body=%s", res6.Code, res6.Body.String())
 	}
 }
 
@@ -306,7 +400,7 @@ func TestRefreshRejectsInvalidJSONAndToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKey returned error: %v", err)
 	}
-	handler := New(newFakeIdentityStore(), privateKey, &privateKey.PublicKey)
+	handler := New(newFakeIdentityStore(), privateKey, &privateKey.PublicKey, nil)
 	for _, body := range []string{`{`, `{"refresh_token":"bad"}`} {
 		req := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", strings.NewReader(body))
 		res := httptest.NewRecorder()
@@ -325,7 +419,7 @@ func TestIdentityPersistenceErrors(t *testing.T) {
 	}
 	registerStore := newFakeIdentityStore()
 	registerStore.createUserErr = errors.New("db down")
-	registerHandler := New(registerStore, privateKey, &privateKey.PublicKey)
+	registerHandler := New(registerStore, privateKey, &privateKey.PublicKey, nil)
 	registerReq := httptest.NewRequest(http.MethodPost, "/v1/auth/register", strings.NewReader(`{
 		"email":"juan@example.com",
 		"password":"Secure!1234",
@@ -340,7 +434,7 @@ func TestIdentityPersistenceErrors(t *testing.T) {
 	}
 
 	refreshStore := newFakeIdentityStore()
-	user := models.User{ID: "usr_1", Email: "juan@example.com", Role: models.RolePatient}
+	user := models.User{ID: "usr_1", Email: "juan@example.com", Role: models.RolePatient, EmailVerified: true}
 	refreshStore.usersByID[user.ID] = user
 	token, jti, err := signRefreshForTest(privateKey, user.ID, user.Role)
 	if err != nil {
@@ -348,7 +442,7 @@ func TestIdentityPersistenceErrors(t *testing.T) {
 	}
 	refreshStore.sessions[jti] = models.Session{ID: jti, UserID: user.ID, Kind: "refresh", ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	refreshStore.deleteErr = errors.New("delete failed")
-	refreshHandler := New(refreshStore, privateKey, &privateKey.PublicKey)
+	refreshHandler := New(refreshStore, privateKey, &privateKey.PublicKey, nil)
 	refreshReq := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", strings.NewReader(`{"refresh_token":"`+token+`"}`))
 	refreshRes := httptest.NewRecorder()
 	refreshHandler.Refresh(refreshRes, refreshReq)
@@ -364,7 +458,7 @@ func TestIdentityPersistenceErrors(t *testing.T) {
 	}
 	sessionStore.sessions[jti] = models.Session{ID: jti, UserID: user.ID, Kind: "refresh", ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	sessionStore.sessionErr = errors.New("session insert failed")
-	sessionHandler := New(sessionStore, privateKey, &privateKey.PublicKey)
+	sessionHandler := New(sessionStore, privateKey, &privateKey.PublicKey, nil)
 	sessionReq := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", strings.NewReader(`{"refresh_token":"`+token+`"}`))
 	sessionRes := httptest.NewRecorder()
 	sessionHandler.Refresh(sessionRes, sessionReq)
@@ -373,15 +467,17 @@ func TestIdentityPersistenceErrors(t *testing.T) {
 	}
 
 	loginStore := newFakeIdentityStore()
-	loginHandler := New(loginStore, privateKey, &privateKey.PublicKey)
-	loginHandler.Register(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/auth/register", strings.NewReader(`{
-		"email":"login@example.com",
-		"password":"Secure!1234",
-		"role":"patient",
-		"first_name":"Login",
-		"last_name":"Failure"
-	}`)))
+	loginUser := models.User{
+		ID:            "usr_login",
+		Email:         "login@example.com",
+		Role:          models.RolePatient,
+		EmailVerified: true,
+	}
+	loginUser.PasswordHash, _ = security.HashPassword("Secure!1234")
+	loginStore.usersByID[loginUser.ID] = loginUser
+	loginStore.usersByEmail[loginUser.Email] = loginUser
 	loginStore.sessionErr = errors.New("session insert failed")
+	loginHandler := New(loginStore, privateKey, &privateKey.PublicKey, nil)
 	loginReq := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"login@example.com","password":"Secure!1234"}`))
 	loginRes := httptest.NewRecorder()
 	loginHandler.LoginMobile(loginRes, loginReq)

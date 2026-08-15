@@ -2,8 +2,11 @@ package identity
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"fmt"
+	"math/big"
 	"net/http"
 	"net/mail"
 	"regexp"
@@ -15,6 +18,7 @@ import (
 
 	"healthos/backend/internal/models"
 	"healthos/backend/internal/store"
+	"healthos/backend/pkg/email"
 	"healthos/backend/pkg/httpx"
 	"healthos/backend/pkg/security"
 )
@@ -23,19 +27,29 @@ type Store interface {
 	CreateUser(ctx context.Context, user models.User) error
 	FindUserByEmail(ctx context.Context, email string) (models.User, error)
 	FindUserByID(ctx context.Context, id string) (models.User, error)
+	FindUserByVerificationToken(ctx context.Context, token string) (models.User, error)
+	VerifyUserEmail(ctx context.Context, token string) (models.User, error)
+	UpdateUserFailedLogins(ctx context.Context, userID string, attempts int, lockoutUntil *time.Time) error
+	ResetUserFailedLogins(ctx context.Context, userID string) error
 	CreateSession(ctx context.Context, session models.Session) error
 	FindSessionByID(ctx context.Context, id string) (models.Session, error)
 	DeleteSessionByID(ctx context.Context, id string) error
 }
 
 type Handler struct {
-	store      Store
-	privateKey *rsa.PrivateKey
-	publicKey  *rsa.PublicKey
+	store       Store
+	privateKey  *rsa.PrivateKey
+	publicKey   *rsa.PublicKey
+	emailSender email.Sender
 }
 
-func New(store Store, privateKey *rsa.PrivateKey, publicKey *rsa.PublicKey) Handler {
-	return Handler{store: store, privateKey: privateKey, publicKey: publicKey}
+func New(store Store, privateKey *rsa.PrivateKey, publicKey *rsa.PublicKey, emailSender email.Sender) Handler {
+	return Handler{
+		store:       store,
+		privateKey:  privateKey,
+		publicKey:   publicKey,
+		emailSender: emailSender,
+	}
 }
 
 type registerRequest struct {
@@ -53,6 +67,10 @@ type loginRequest struct {
 
 type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
+}
+
+type verifyEmailRequest struct {
+	Token string `json:"token"`
 }
 
 func (h Handler) Register(w http.ResponseWriter, r *http.Request) {
@@ -73,14 +91,22 @@ func (h Handler) Register(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "password hashing failed")
 		return
 	}
+
+	verificationToken := "vtok_" + uuid.NewString()
+	otpCode := generate6DigitOTP()
+	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+
 	user := models.User{
-		ID:           "usr_" + uuid.NewString(),
-		Email:        req.Email,
-		PasswordHash: passwordHash,
-		Role:         req.Role,
-		FirstName:    req.FirstName,
-		LastName:     req.LastName,
-		CreatedAt:    time.Now().UTC(),
+		ID:                    "usr_" + uuid.NewString(),
+		Email:                 req.Email,
+		PasswordHash:          passwordHash,
+		Role:                  req.Role,
+		FirstName:             req.FirstName,
+		LastName:              req.LastName,
+		EmailVerified:         false,
+		VerificationToken:     verificationToken,
+		VerificationExpiresAt: &expiresAt,
+		CreatedAt:             time.Now().UTC(),
 	}
 	if err := h.store.CreateUser(r.Context(), user); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
@@ -90,11 +116,53 @@ func (h Handler) Register(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "user registration failed")
 		return
 	}
+
+	if h.emailSender != nil {
+		fullName := strings.TrimSpace(user.FirstName + " " + user.LastName)
+		_ = h.emailSender.SendVerificationEmail(r.Context(), user.Email, fullName, verificationToken, otpCode)
+	}
+
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"status": "success",
 		"data": map[string]string{
+			"user_id":            user.ID,
+			"verification_token": verificationToken,
+			"message":            "User registered successfully. Please verify your email.",
+		},
+	})
+}
+
+func (h Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
+	var token string
+	if r.Method == http.MethodPost && r.Header.Get("Content-Type") == "application/json" {
+		var req verifyEmailRequest
+		if err := httpx.DecodeJSON(r, &req); err == nil {
+			token = strings.TrimSpace(req.Token)
+		}
+	}
+	if token == "" {
+		token = strings.TrimSpace(r.URL.Query().Get("token"))
+	}
+	if token == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "verification token is required")
+		return
+	}
+
+	user, err := h.store.VerifyUserEmail(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid or expired verification token")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "email verification failed")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status": "success",
+		"data": map[string]string{
 			"user_id": user.ID,
-			"message": "User registered successfully. Please verify your email.",
+			"message": "Email verified successfully. You can now login.",
 		},
 	})
 }
@@ -109,11 +177,21 @@ func (h Handler) LoginWeb(w http.ResponseWriter, r *http.Request) {
 
 func (h Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req refreshRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+	refreshToken := ""
+	if err := httpx.DecodeJSON(r, &req); err == nil {
+		refreshToken = strings.TrimSpace(req.RefreshToken)
+	}
+	if refreshToken == "" {
+		if cookie, err := r.Cookie("refresh_token"); err == nil {
+			refreshToken = strings.TrimSpace(cookie.Value)
+		}
+	}
+	if refreshToken == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "refresh token is required")
 		return
 	}
-	claims, err := security.VerifyJWT(h.publicKey, strings.TrimSpace(req.RefreshToken))
+
+	claims, err := security.VerifyJWT(h.publicKey, refreshToken)
 	if err != nil || claims.Kind != "refresh" || claims.ID == "" {
 		httpx.WriteError(w, http.StatusUnauthorized, "invalid refresh token")
 		return
@@ -153,6 +231,17 @@ func (h Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "refresh session persistence failed")
 		return
 	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    refresh,
+		Path:     "/v1/auth",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  now.Add(7 * 24 * time.Hour),
+	})
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"access_token":  access,
 		"refresh_token": refresh,
@@ -176,10 +265,34 @@ func (h Handler) login(w http.ResponseWriter, r *http.Request, web bool) {
 		httpx.WriteError(w, http.StatusInternalServerError, "login lookup failed")
 		return
 	}
+
+	now := time.Now().UTC()
+	if user.LockoutUntil != nil && user.LockoutUntil.After(now) {
+		httpx.WriteError(w, http.StatusTooManyRequests, "account temporarily locked due to multiple failed login attempts; try again later")
+		return
+	}
+
 	if !security.CheckPassword(user.PasswordHash, req.Password) {
+		attempts := user.FailedLoginAttempts + 1
+		var lockoutUntil *time.Time
+		if attempts >= 5 {
+			l := now.Add(15 * time.Minute)
+			lockoutUntil = &l
+		}
+		_ = h.store.UpdateUserFailedLogins(r.Context(), user.ID, attempts, lockoutUntil)
 		httpx.WriteError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+
+	if !user.EmailVerified && user.Role != models.RoleAdmin {
+		httpx.WriteError(w, http.StatusForbidden, "email is not verified; please verify your email before logging in")
+		return
+	}
+
+	if user.FailedLoginAttempts > 0 || user.LockoutUntil != nil {
+		_ = h.store.ResetUserFailedLogins(r.Context(), user.ID)
+	}
+
 	access, _, err := security.SignJWT(h.privateKey, user.ID, user.Role, "access", 15*time.Minute)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "token signing failed")
@@ -190,7 +303,7 @@ func (h Handler) login(w http.ResponseWriter, r *http.Request, web bool) {
 		httpx.WriteError(w, http.StatusInternalServerError, "token signing failed")
 		return
 	}
-	now := time.Now().UTC()
+
 	if err := h.store.CreateSession(r.Context(), models.Session{
 		ID:        refreshID,
 		UserID:    user.ID,
@@ -214,6 +327,15 @@ func (h Handler) login(w http.ResponseWriter, r *http.Request, web bool) {
 			Expires:  now.Add(15 * time.Minute),
 		})
 		http.SetCookie(w, &http.Cookie{
+			Name:     "refresh_token",
+			Value:    refresh,
+			Path:     "/v1/auth",
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteStrictMode,
+			Expires:  now.Add(7 * 24 * time.Hour),
+		})
+		http.SetCookie(w, &http.Cookie{
 			Name:     "csrf_token",
 			Value:    csrf,
 			Path:     "/",
@@ -234,6 +356,14 @@ func (h Handler) login(w http.ResponseWriter, r *http.Request, web bool) {
 		"refresh_token": refresh,
 		"expires_in":    900,
 	})
+}
+
+func generate6DigitOTP() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(900000))
+	if err != nil {
+		return "123456"
+	}
+	return fmt.Sprintf("%06d", n.Int64()+100000)
 }
 
 func validateRegister(req registerRequest) error {

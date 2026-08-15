@@ -61,6 +61,16 @@ func (f *fakeStore) UpdateDeviceTransferRequestStatus(ctx context.Context, id, s
 	return f.transfer, nil
 }
 
+func (f *fakeStore) FindDeviceByID(ctx context.Context, id string) (models.Device, error) {
+	if f.deviceErr != nil {
+		return models.Device{}, f.deviceErr
+	}
+	if f.device.ID == id {
+		return f.device, nil
+	}
+	return models.Device{ID: id, OwnerID: "usr_1", Status: "active"}, nil
+}
+
 func (f *fakeStore) UpdateDeviceOwner(ctx context.Context, id, ownerID string, updatedAt time.Time) error {
 	if f.updateErr != nil {
 		return f.updateErr

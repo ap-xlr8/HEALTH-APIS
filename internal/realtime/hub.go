@@ -10,18 +10,24 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"healthos/backend/internal/authz"
 	"healthos/backend/pkg/httpx"
 )
 
+type clientInfo struct {
+	userID string
+	role   string
+}
+
 type Hub struct {
 	mu      sync.RWMutex
-	clients map[*websocket.Conn]struct{}
+	clients map[*websocket.Conn]clientInfo
 	logger  *slog.Logger
 }
 
 func New(logger *slog.Logger) *Hub {
 	return &Hub{
-		clients: make(map[*websocket.Conn]struct{}),
+		clients: make(map[*websocket.Conn]clientInfo),
 		logger:  logger,
 	}
 }
@@ -34,9 +40,17 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+
+	info := clientInfo{}
+	if claims, ok := authz.ClaimsFromContext(r.Context()); ok && claims != nil {
+		info.userID = claims.UserID
+		info.role = claims.Role
+	}
+
 	h.mu.Lock()
-	h.clients[conn] = struct{}{}
+	h.clients[conn] = info
 	h.mu.Unlock()
+
 	defer func() {
 		h.mu.Lock()
 		delete(h.clients, conn)
@@ -79,24 +93,59 @@ func sameHostOrigin(r *http.Request) bool {
 	return parsed.Host == r.Host
 }
 
+type payloadMeta struct {
+	PatientID string `json:"patient_id"`
+	PatientId string `json:"patientId"`
+}
+
 func (h *Hub) Broadcast(payload any) {
+	h.SendToPatient("", payload)
+}
+
+func (h *Hub) SendToPatient(patientID string, payload any) {
 	message, err := json.Marshal(payload)
 	if err != nil {
 		h.logger.Error("realtime_marshal_error", "error", err)
 		return
 	}
+
+	targetPatient := patientID
+	if targetPatient == "" {
+		var meta payloadMeta
+		if err := json.Unmarshal(message, &meta); err == nil {
+			if meta.PatientID != "" {
+				targetPatient = meta.PatientID
+			} else if meta.PatientId != "" {
+				targetPatient = meta.PatientId
+			}
+		}
+	}
+
 	h.mu.RLock()
-	clients := make([]*websocket.Conn, 0, len(h.clients))
-	for conn := range h.clients {
-		clients = append(clients, conn)
+	type recipient struct {
+		conn *websocket.Conn
+		info clientInfo
+	}
+	recipients := make([]recipient, 0, len(h.clients))
+	for conn, info := range h.clients {
+		recipients = append(recipients, recipient{conn: conn, info: info})
 	}
 	h.mu.RUnlock()
-	for _, conn := range clients {
-		if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
+
+	for _, rec := range recipients {
+		// If the message is targeted to a specific patient PHI,
+		// only send to that patient or to system admins
+		if targetPatient != "" {
+			if rec.info.role != "admin" && rec.info.userID != targetPatient && rec.info.userID != "" {
+				continue
+			}
+		}
+
+		if err := rec.conn.WriteMessage(websocket.TextMessage, message); err != nil {
 			h.mu.Lock()
-			delete(h.clients, conn)
+			delete(h.clients, rec.conn)
 			h.mu.Unlock()
-			_ = conn.Close()
+			_ = rec.conn.Close()
 		}
 	}
 }

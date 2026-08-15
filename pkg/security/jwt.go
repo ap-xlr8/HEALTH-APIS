@@ -9,6 +9,11 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	JWTIssuer   = "healthos"
+	JWTAudience = "healthos-app"
+)
+
 type Claims struct {
 	UserID string `json:"uid"`
 	Role   string `json:"role"`
@@ -33,7 +38,8 @@ func SignJWT(privateKey *rsa.PrivateKey, userID, role, kind string, ttl time.Dur
 		Kind:   kind,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
-			Issuer:    "healthos",
+			Issuer:    JWTIssuer,
+			Audience:  jwt.ClaimStrings{JWTAudience},
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 			ID:        jti,
@@ -44,12 +50,19 @@ func SignJWT(privateKey *rsa.PrivateKey, userID, role, kind string, ttl time.Dur
 }
 
 func VerifyJWT(publicKey *rsa.PublicKey, tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		if token.Method.Alg() != jwt.SigningMethodRS256.Alg() {
-			return nil, errors.New("unexpected signing algorithm")
-		}
-		return publicKey, nil
-	})
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		&Claims{},
+		func(token *jwt.Token) (interface{}, error) {
+			if token.Method.Alg() != jwt.SigningMethodRS256.Alg() {
+				return nil, errors.New("unexpected signing algorithm")
+			}
+			return publicKey, nil
+		},
+		jwt.WithIssuer(JWTIssuer),
+		jwt.WithAudience(JWTAudience),
+		jwt.WithValidMethods([]string{"RS256"}),
+	)
 	if err != nil {
 		return nil, err
 	}

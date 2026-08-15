@@ -25,6 +25,36 @@ paths:
                 $ref: '#/components/schemas/RegisterResponse'
         '400': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+  /v1/auth/verify-email:
+    post:
+      tags: [AUTH]
+      summary: Verificacion de correo electronico con token o codigo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, example: "vtok_123456" }
+      responses:
+        '200':
+          description: Correo verificado con exito
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, data]
+                properties:
+                  status: { type: string, enum: [success] }
+                  data:
+                    type: object
+                    required: [user_id, message]
+                    properties:
+                      user_id: { type: string }
+                      message: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
   /v1/auth/login:
     post:
       tags: [AUTH]

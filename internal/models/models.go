@@ -7,22 +7,34 @@ const (
 	RoleCaregiver = "caregiver"
 	RoleAdmin     = "admin"
 
-	ScopeReadMeasurements = "read:measurements"
-	ScopeReadPatient      = "read:patient"
-	ScopeReadAlerts       = "read:alerts"
+	ScopeReadMeasurements  = "read:measurements"
+	ScopeReadPatient       = "read:patient"
+	ScopeReadAlerts        = "read:alerts"
+	ScopeWriteMeasurements = "write:measurements"
+	ScopeWriteClinical     = "write:clinical"
+	ScopeWriteMedications  = "write:medications"
+	ScopeWriteReports      = "write:reports"
+	ScopeWriteConsent      = "write:consent"
+	ScopeWriteDevices      = "write:devices"
+	ScopeWritePatient      = "write:patient"
 )
 
 type User struct {
-	ID               string    `bson:"_id" json:"id"`
-	Email            string    `bson:"email" json:"email"`
-	PasswordHash     string    `bson:"password_hash" json:"-"`
-	Role             string    `bson:"role" json:"role"`
-	FirstName        string    `bson:"first_name" json:"first_name"`
-	LastName         string    `bson:"last_name" json:"last_name"`
-	Age              int       `bson:"age,omitempty" json:"age,omitempty"`
-	HealthProfile    any       `bson:"health_profile,omitempty" json:"health_profile,omitempty"`
-	ActiveConditions []string  `bson:"active_conditions,omitempty" json:"active_conditions,omitempty"`
-	CreatedAt        time.Time `bson:"created_at" json:"created_at"`
+	ID                    string     `bson:"_id" json:"id"`
+	Email                 string     `bson:"email" json:"email"`
+	PasswordHash          string     `bson:"password_hash" json:"-"`
+	Role                  string     `bson:"role" json:"role"`
+	FirstName             string     `bson:"first_name" json:"first_name"`
+	LastName              string     `bson:"last_name" json:"last_name"`
+	Age                   int        `bson:"age,omitempty" json:"age,omitempty"`
+	HealthProfile         any        `bson:"health_profile,omitempty" json:"health_profile,omitempty"`
+	ActiveConditions      []string   `bson:"active_conditions,omitempty" json:"active_conditions,omitempty"`
+	EmailVerified         bool       `bson:"email_verified" json:"email_verified"`
+	VerificationToken     string     `bson:"verification_token,omitempty" json:"-"`
+	VerificationExpiresAt *time.Time `bson:"verification_expires_at,omitempty" json:"-"`
+	FailedLoginAttempts   int        `bson:"failed_login_attempts,omitempty" json:"-"`
+	LockoutUntil          *time.Time `bson:"lockout_until,omitempty" json:"-"`
+	CreatedAt             time.Time  `bson:"created_at" json:"created_at"`
 }
 
 type Session struct {

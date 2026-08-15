@@ -25,6 +25,9 @@ type Config struct {
 	StripeSecretKey     string
 	StripeWebhookSecret string
 	FCMServerKey        string
+	SendGridAPIKey      string
+	SendGridFromEmail   string
+	SendGridFromName    string
 }
 
 func Load() (Config, error) {
@@ -42,6 +45,9 @@ func Load() (Config, error) {
 		StripeSecretKey:     os.Getenv("STRIPE_SECRET_KEY"),
 		StripeWebhookSecret: os.Getenv("STRIPE_WEBHOOK_SECRET"),
 		FCMServerKey:        os.Getenv("FCM_SERVER_KEY"),
+		SendGridAPIKey:      os.Getenv("SENDGRID_API_KEY"),
+		SendGridFromEmail:   getEnv("SENDGRID_FROM_EMAIL", "notifications@healthos.app"),
+		SendGridFromName:    getEnv("SENDGRID_FROM_NAME", "BioGuard Health Platform"),
 	}
 
 	var missing []string
