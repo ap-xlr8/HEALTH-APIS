@@ -1,0 +1,11 @@
+.git
+.github
+.env
+.env.local
+coverage.out
+coverage.func.txt
+results.json
+bin/
+.tools/
+tmp/
+*.tmp

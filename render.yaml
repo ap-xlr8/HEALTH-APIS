@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: healthos-backend
+    runtime: docker
+    plan: starter
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: ENV
+        value: staging
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DATABASE
+        value: healthos
+      - key: JWT_PRIVATE_KEY
+        sync: false
+      - key: JWT_PUBLIC_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: FCM_SERVER_KEY
+        sync: false

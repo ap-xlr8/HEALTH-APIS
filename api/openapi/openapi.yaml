@@ -1,0 +1,1245 @@
+openapi: 3.0.3
+info:
+  title: Health OS Backend API
+  version: 1.0.0
+servers:
+  - url: https://staging.api.healthos.app
+  - url: http://localhost:8080
+paths:
+  /v1/auth/register:
+    post:
+      tags: [AUTH]
+      summary: Registro comun para Mobile y Web
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Usuario registrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /v1/auth/login:
+    post:
+      tags: [AUTH]
+      summary: Login Mobile con JSON tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Tokens JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileLoginResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /v1/auth/web/login:
+    post:
+      tags: [AUTH]
+      summary: Login Web con HttpOnly cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login exitoso con Set-Cookie access_token y csrf_token
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebLoginResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /v1/auth/refresh:
+    post:
+      tags: [AUTH]
+      summary: Rotacion on-use de Refresh Token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Nuevos tokens JWT; el refresh anterior queda revocado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileLoginResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /v1/sync/measurements:
+    post:
+      tags: [SYNC]
+      summary: Sincronizacion batch de mediciones wearable
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncMeasurementsRequest'
+      responses:
+        '200':
+          description: Mediciones sincronizadas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncMeasurementsResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/subscriptions/webhook:
+    post:
+      tags: [SUBSCRIPTIONS]
+      summary: Webhook de Stripe validado por firma
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Evento aceptado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [success] }
+        '400': { $ref: '#/components/responses/Error' }
+  /v1/admin/break-glass/request:
+    post:
+      tags: [ADMIN]
+      summary: Solicitar acceso break-glass de emergencia
+      description: Solo admin. Inicia el flujo Two-Person rule; otro admin debe aprobarlo. Duracion maxima 2 horas.
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BreakGlassRequestInput'
+      responses:
+        '201':
+          description: Solicitud break-glass pendiente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BreakGlassRequest'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/admin/break-glass/{id}/approve:
+    post:
+      tags: [ADMIN]
+      summary: Aprobar acceso break-glass
+      description: Solo admin. El aprobador debe ser distinto al solicitante.
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: bgr_123 }
+      responses:
+        '200':
+          description: Solicitud break-glass aprobada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BreakGlassRequest'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /v1/alerts/{id}:
+    get:
+      tags: [ALERTAS]
+      summary: Detalle de alerta
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: alrt_445566 }
+        - name: X-CSRF-Token
+          in: header
+          required: false
+          description: Required when authenticating via HttpOnly cookie.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Alerta
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/alerts/{id}/acknowledge:
+    post:
+      tags: [ALERTAS]
+      summary: Reconocer una alerta generada por anomalía
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: alrt_445566 }
+        - name: X-CSRF-Token
+          in: header
+          required: false
+          description: Required when authenticating via HttpOnly cookie.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Alerta reconocida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}:
+    get:
+      tags: [PACIENTES]
+      summary: Obtener perfil del paciente para cuidador o web
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: usr_67a1b2c3d4e5 }
+        - name: X-CSRF-Token
+          in: header
+          required: false
+          description: Required when authenticating via HttpOnly cookie.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Perfil del paciente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatientProfile'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/measurements:
+    get:
+      tags: [SYNC]
+      summary: Listar mediciones biométricas time-series del paciente
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+        - name: type
+          in: query
+          required: false
+          schema: { type: string, enum: [heart_rate, blood_oxygen, steps] }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+      responses:
+        '200':
+          description: Mediciones ordenadas por timestamp descendente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeasurementListResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/clinical-records:
+    get:
+      tags: [CLINICAL]
+      summary: Listar registros clinicos del paciente
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+      responses:
+        '200':
+          description: Registros clinicos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClinicalRecordListResponse'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [CLINICAL]
+      summary: Crear registro clinico del paciente
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateClinicalRecordRequest'
+      responses:
+        '201':
+          description: Registro clinico creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClinicalRecordResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/medications:
+    get:
+      tags: [CLINICAL]
+      summary: Listar medicamentos activos o historicos del paciente
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+      responses:
+        '200':
+          description: Medicamentos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MedicationListResponse'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [CLINICAL]
+      summary: Crear medicamento del pastillero
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMedicationRequest'
+      responses:
+        '201':
+          description: Medicamento creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MedicationResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/medication-logs:
+    post:
+      tags: [CLINICAL]
+      summary: Registrar toma o evento puntual de medicacion
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMedicationLogRequest'
+      responses:
+        '201':
+          description: Log de medicacion creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MedicationLogResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/reports:
+    get:
+      tags: [REPORTS]
+      summary: Listar referencias a reportes PDF del paciente en S3
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+      responses:
+        '200':
+          description: Reportes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportListResponse'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [REPORTS]
+      summary: Registrar referencia a reporte PDF generado
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReportRequest'
+      responses:
+        '201':
+          description: Reporte registrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/consents:
+    post:
+      tags: [CONSENT]
+      summary: Otorgar scopes granulares de paciente a cuidador
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantConsentRequest'
+      responses:
+        '201':
+          description: Consentimiento creado o actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/consents/{caregiver_id}:
+    delete:
+      tags: [CONSENT]
+      summary: Revocar todos los scopes otorgados a un cuidador
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CaregiverID'
+      responses:
+        '200':
+          description: Consentimiento revocado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/relationships:
+    get:
+      tags: [RELATIONSHIPS]
+      summary: Listar relaciones caregiver-paciente visibles al usuario autenticado
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Relaciones
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipListResponse'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [RELATIONSHIPS]
+      summary: Asignar un cuidador al paciente autenticado
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRelationshipRequest'
+      responses:
+        '201':
+          description: Relacion activa creada o reactivada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/relationships/{caregiver_id}:
+    delete:
+      tags: [RELATIONSHIPS]
+      summary: Revocar relacion activa entre paciente autenticado y cuidador
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CaregiverID'
+      responses:
+        '200':
+          description: Relacion revocada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/devices:
+    get:
+      tags: [DEVICES]
+      summary: Listar wearables vinculados al usuario autenticado
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Dispositivos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [DEVICES]
+      summary: Registrar wearable vinculado al usuario autenticado
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDeviceRequest'
+      responses:
+        '201':
+          description: Dispositivo registrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/devices/{id}/transfer-requests:
+    post:
+      tags: [DEVICES]
+      summary: Solicitar transferencia de propiedad de wearable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: dev_998877 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceTransferRequestInput'
+      responses:
+        '201':
+          description: Solicitud de transferencia creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceTransferResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/device-transfer-requests/{id}/approve:
+    post:
+      tags: [DEVICES]
+      summary: Aprobar transferencia pendiente de wearable
+      description: Solo el usuario destino de la transferencia puede aprobarla; al aprobar cambia el propietario del dispositivo.
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: dtr_123 }
+      responses:
+        '200':
+          description: Transferencia aprobada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceTransferResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/device-transfer-requests/{id}/reject:
+    post:
+      tags: [DEVICES]
+      summary: Rechazar transferencia pendiente de wearable
+      description: El usuario origen o destino de la transferencia puede rechazarla.
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: dtr_123 }
+      responses:
+        '200':
+          description: Transferencia rechazada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceTransferResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/notifications:
+    get:
+      tags: [NOTIFICATIONS]
+      summary: Listar historial de notificaciones del usuario autenticado
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Notificaciones
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationListResponse'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [NOTIFICATIONS]
+      summary: Crear notificacion push, email o sms para el usuario autenticado
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNotificationRequest'
+      responses:
+        '201':
+          description: Notificacion registrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/support-tickets:
+    get:
+      tags: [SUPPORT]
+      summary: Listar tickets de soporte del usuario autenticado
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Tickets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportTicketListResponse'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [SUPPORT]
+      summary: Crear ticket de mesa de ayuda
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSupportTicketRequest'
+      responses:
+        '201':
+          description: Ticket creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportTicketResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/realtime:
+    get:
+      tags: [REALTIME]
+      summary: WebSocket de telemetria y alertas en vivo
+      description: Upgrade WebSocket autenticado. Los mensajes estan definidos en api/asyncapi/asyncapi.yaml.
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '101':
+          description: Switching Protocols
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+  parameters:
+    PatientID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: usr_67a1b2c3d4e5 }
+    CaregiverID:
+      name: caregiver_id
+      in: path
+      required: true
+      schema: { type: string, maxLength: 80, example: usr_caregiver }
+  responses:
+    Error:
+      description: Error JSON
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [status, message]
+      properties:
+        status: { type: string, enum: [error] }
+        message: { type: string }
+    RegisterRequest:
+      type: object
+      required: [email, password, role, first_name, last_name]
+      additionalProperties: false
+      properties:
+        email: { type: string, format: email, example: juan@example.com }
+        password: { type: string, minLength: 9, example: Secure!1234 }
+        role: { type: string, enum: [patient, caregiver], example: patient }
+        first_name: { type: string, example: Juan }
+        last_name: { type: string, example: Perez }
+    RegisterResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: object
+          required: [user_id, message]
+          properties:
+            user_id: { type: string, example: usr_67a1b2c3d4e5 }
+            message: { type: string, example: User registered successfully. Please verify your email. }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email: { type: string, format: email, example: juan@example.com }
+        password: { type: string, example: Secure!1234 }
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      additionalProperties: false
+      properties:
+        refresh_token: { type: string }
+    MobileLoginResponse:
+      type: object
+      required: [access_token, refresh_token, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer, example: 900 }
+    WebLoginResponse:
+      type: object
+      required: [status, csrf_token, message]
+      properties:
+        status: { type: string, enum: [success] }
+        csrf_token: { type: string }
+        message: { type: string, example: Logged in successfully }
+    SyncMeasurementsRequest:
+      type: object
+      required: [device_id, data]
+      additionalProperties: false
+      properties:
+        device_id: { type: string, example: dev_998877 }
+        data:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/MeasurementInput'
+    MeasurementInput:
+      type: object
+      required: [type, value, unit, timestamp]
+      additionalProperties: false
+      properties:
+        type: { type: string, enum: [heart_rate, blood_oxygen, steps], example: heart_rate }
+        value: { type: number, example: 75.5 }
+        unit: { type: string, enum: [bpm, '%', count], example: bpm }
+        timestamp: { type: string, format: date-time, example: '2023-10-15T14:30:00Z' }
+    Measurement:
+      type: object
+      required: [id, patient_id, device_id, type, value, unit, timestamp, created_at]
+      properties:
+        id: { type: string, example: meas_112233 }
+        patient_id: { type: string, example: usr_67a1b2c3d4e5 }
+        device_id: { type: string, example: dev_998877 }
+        type: { type: string, enum: [heart_rate, blood_oxygen, steps], example: heart_rate }
+        value: { type: number, example: 75.5 }
+        unit: { type: string, enum: [bpm, '%', count], example: bpm }
+        timestamp: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    MeasurementListResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Measurement' }
+    SyncMeasurementsResponse:
+      type: object
+      required: [status, synced_count, alerts_triggered]
+      properties:
+        status: { type: string, enum: [success] }
+        synced_count: { type: integer, example: 2 }
+        alerts_triggered:
+          type: array
+          items: { type: string }
+    BreakGlassRequestInput:
+      type: object
+      required: [reason, duration_minutes]
+      additionalProperties: false
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 1000, example: Incident response access required }
+        duration_minutes: { type: integer, minimum: 1, maximum: 120, example: 60 }
+    BreakGlassRequest:
+      type: object
+      required: [id, requester_id, reason, status, expires_at, created_at]
+      properties:
+        id: { type: string, example: bgr_123 }
+        requester_id: { type: string, example: admin_1 }
+        approver_id: { type: string, nullable: true, example: admin_2 }
+        reason: { type: string }
+        status: { type: string, enum: [pending, approved], example: pending }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        approved_at: { type: string, format: date-time, nullable: true }
+    Alert:
+      type: object
+      required: [id, patient_id, type, severity, message, measurement_ref, acknowledged, created_at]
+      properties:
+        id: { type: string, example: alrt_445566 }
+        patient_id: { type: string, example: usr_67a1b2c3d4e5 }
+        type: { type: string, example: tachycardia }
+        severity: { type: string, example: critical }
+        message: { type: string }
+        measurement_ref: { type: string, example: meas_112233 }
+        acknowledged: { type: boolean, example: false }
+        created_at: { type: string, format: date-time }
+    PatientProfile:
+      type: object
+      required: [id, first_name, last_name, age, health_profile, active_conditions]
+      properties:
+        id: { type: string, example: usr_67a1b2c3d4e5 }
+        first_name: { type: string, example: Juan }
+        last_name: { type: string, example: Perez }
+        age: { type: integer, example: 68 }
+        health_profile:
+          type: object
+          properties:
+            blood_type: { type: string, example: O+ }
+            height_cm: { type: integer, example: 175 }
+            weight_kg: { type: number, example: 72.5 }
+        active_conditions:
+          type: array
+          items: { type: string }
+    CreateClinicalRecordRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        conditions:
+          type: array
+          maxItems: 50
+          items: { type: string, maxLength: 80 }
+        allergies:
+          type: array
+          maxItems: 50
+          items: { type: string, maxLength: 80 }
+        notes: { type: string, maxLength: 2000 }
+        recorded_at: { type: string, format: date-time }
+    ClinicalRecord:
+      type: object
+      required: [id, patient_id, conditions, allergies, recorded_by, recorded_at, created_at]
+      properties:
+        id: { type: string, example: clin_123 }
+        patient_id: { type: string, example: usr_67a1b2c3d4e5 }
+        conditions:
+          type: array
+          items: { type: string }
+        allergies:
+          type: array
+          items: { type: string }
+        notes: { type: string }
+        recorded_by: { type: string, example: usr_doc }
+        recorded_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    ClinicalRecordResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/ClinicalRecord' }
+    ClinicalRecordListResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ClinicalRecord' }
+    CreateMedicationRequest:
+      type: object
+      required: [name, dosage, schedule]
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 120, example: Amlodipine }
+        dosage: { type: string, maxLength: 80, example: 5mg }
+        schedule: { type: string, maxLength: 200, example: daily }
+        active: { type: boolean, default: true }
+    Medication:
+      type: object
+      required: [id, patient_id, name, dosage, schedule, active, created_at, updated_at]
+      properties:
+        id: { type: string, example: med_123 }
+        patient_id: { type: string }
+        name: { type: string }
+        dosage: { type: string }
+        schedule: { type: string }
+        active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MedicationResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/Medication' }
+    MedicationListResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Medication' }
+    CreateMedicationLogRequest:
+      type: object
+      required: [medication_id, status]
+      additionalProperties: false
+      properties:
+        medication_id: { type: string, maxLength: 80, example: med_123 }
+        status: { type: string, enum: [taken, missed, skipped] }
+        taken_at: { type: string, format: date-time }
+    MedicationLog:
+      type: object
+      required: [id, patient_id, medication_id, status, taken_at, created_at]
+      properties:
+        id: { type: string, example: mlog_123 }
+        patient_id: { type: string }
+        medication_id: { type: string }
+        status: { type: string }
+        taken_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    MedicationLogResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/MedicationLog' }
+    RegisterDeviceRequest:
+      type: object
+      required: [serial_number, type]
+      additionalProperties: false
+      properties:
+        serial_number: { type: string, maxLength: 128, example: SN-123 }
+        type: { type: string, maxLength: 40, example: wearable }
+    Device:
+      type: object
+      required: [id, owner_id, type, status, created_at, updated_at]
+      properties:
+        id: { type: string, example: dev_998877 }
+        owner_id: { type: string }
+        serial_number: { type: string }
+        type: { type: string }
+        status: { type: string, enum: [active, inactive, transferred] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    DeviceResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/Device' }
+    DeviceListResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Device' }
+    DeviceTransferRequestInput:
+      type: object
+      required: [to_owner_id]
+      additionalProperties: false
+      properties:
+        to_owner_id: { type: string, example: usr_next }
+    DeviceTransfer:
+      type: object
+      required: [id, device_id, from_owner_id, to_owner_id, status, created_at, updated_at]
+      properties:
+        id: { type: string, example: dtr_123 }
+        device_id: { type: string }
+        from_owner_id: { type: string }
+        to_owner_id: { type: string }
+        status: { type: string, enum: [pending, approved, rejected] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    DeviceTransferResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/DeviceTransfer' }
+    GrantConsentRequest:
+      type: object
+      required: [caregiver_id, scopes]
+      additionalProperties: false
+      properties:
+        caregiver_id: { type: string, example: usr_caregiver }
+        scopes:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [read:alerts, read:measurements, read:patient] }
+    Consent:
+      type: object
+      required: [patient_id, caregiver_id, scopes, revoked, created_at, updated_at]
+      properties:
+        patient_id: { type: string }
+        caregiver_id: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        revoked: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ConsentResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/Consent' }
+    CreateRelationshipRequest:
+      type: object
+      required: [caregiver_id]
+      additionalProperties: false
+      properties:
+        caregiver_id: { type: string, maxLength: 80, example: usr_caregiver }
+    Relationship:
+      type: object
+      required: [id, patient_id, caregiver_id, status, created_at, updated_at]
+      properties:
+        id: { type: string, example: rel_123 }
+        patient_id: { type: string, example: usr_patient }
+        caregiver_id: { type: string, example: usr_caregiver }
+        status: { type: string, enum: [active, revoked], example: active }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RelationshipResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/Relationship' }
+    RelationshipListResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Relationship' }
+    CreateReportRequest:
+      type: object
+      required: [url, format]
+      additionalProperties: false
+      properties:
+        url: { type: string, example: s3://reports/rep_1.pdf }
+        format: { type: string, enum: [pdf] }
+    Report:
+      type: object
+      required: [id, patient_id, url, format, created_by, created_at]
+      properties:
+        id: { type: string, example: rep_123 }
+        patient_id: { type: string }
+        url: { type: string }
+        format: { type: string, enum: [pdf] }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+    ReportResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/Report' }
+    ReportListResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Report' }
+    CreateNotificationRequest:
+      type: object
+      required: [channel, title, body]
+      additionalProperties: false
+      properties:
+        channel: { type: string, enum: [push, email, sms] }
+        title: { type: string, maxLength: 120 }
+        body: { type: string, maxLength: 1000 }
+        metadata: { type: object }
+    Notification:
+      type: object
+      required: [id, user_id, channel, title, body, created_at]
+      properties:
+        id: { type: string, example: not_123 }
+        user_id: { type: string }
+        channel: { type: string, enum: [push, email, sms] }
+        title: { type: string }
+        body: { type: string }
+        metadata: { type: object }
+        created_at: { type: string, format: date-time }
+    NotificationResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/Notification' }
+    NotificationListResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+    CreateSupportTicketRequest:
+      type: object
+      required: [subject, body]
+      additionalProperties: false
+      properties:
+        subject: { type: string, maxLength: 160 }
+        body: { type: string, maxLength: 4000 }
+    SupportTicket:
+      type: object
+      required: [id, user_id, status, subject, body, created_at, updated_at]
+      properties:
+        id: { type: string, example: sup_123 }
+        user_id: { type: string }
+        status: { type: string, enum: [open, closed] }
+        subject: { type: string }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SupportTicketResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/SupportTicket' }
+    SupportTicketListResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/SupportTicket' }

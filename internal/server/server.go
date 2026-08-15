@@ -1,0 +1,339 @@
+package server
+
+import (
+	"log/slog"
+	"net/http"
+
+	"healthos/backend/internal/alerts"
+	"healthos/backend/internal/authz"
+	"healthos/backend/internal/breakglass"
+	"healthos/backend/internal/clinical"
+	"healthos/backend/internal/config"
+	"healthos/backend/internal/consent"
+	"healthos/backend/internal/devices"
+	"healthos/backend/internal/health"
+	"healthos/backend/internal/identity"
+	"healthos/backend/internal/models"
+	"healthos/backend/internal/notifications"
+	"healthos/backend/internal/patients"
+	"healthos/backend/internal/realtime"
+	"healthos/backend/internal/relationships"
+	"healthos/backend/internal/reports"
+	"healthos/backend/internal/store"
+	"healthos/backend/internal/subscriptions"
+	"healthos/backend/internal/support"
+)
+
+type Server struct {
+	cfg           config.Config
+	logger        *slog.Logger
+	store         *store.Mongo
+	authz         authz.Middleware
+	limiter       *RateLimiter
+	identity      identity.Handler
+	health        health.Handler
+	alerts        alerts.Handler
+	patients      patients.Handler
+	clinical      clinical.Handler
+	devices       devices.Handler
+	consent       consent.Handler
+	relationships relationships.Handler
+	reports       reports.Handler
+	notifications notifications.Handler
+	support       support.Handler
+	realtime      *realtime.Hub
+	subscriptions subscriptions.Handler
+	breakglass    breakglass.Handler
+}
+
+func New(cfg config.Config, logger *slog.Logger, mongoStore *store.Mongo) (*Server, error) {
+	authzMiddleware := authz.New(cfg.JWTPublicKey, mongoStore)
+	hub := realtime.New(logger)
+	return &Server{
+		cfg:           cfg,
+		logger:        logger,
+		store:         mongoStore,
+		authz:         authzMiddleware,
+		limiter:       NewRateLimiter(),
+		identity:      identity.New(mongoStore, cfg.JWTPrivateKey, cfg.JWTPublicKey),
+		health:        health.New(mongoStore, hub),
+		alerts:        alerts.New(mongoStore),
+		patients:      patients.New(mongoStore),
+		clinical:      clinical.New(mongoStore),
+		devices:       devices.NewHandler(mongoStore),
+		consent:       consent.NewHandler(mongoStore, hub),
+		relationships: relationships.NewHandler(mongoStore),
+		reports:       reports.New(mongoStore),
+		notifications: notifications.New(mongoStore),
+		support:       support.New(mongoStore),
+		realtime:      hub,
+		subscriptions: subscriptions.New(mongoStore, cfg.StripeWebhookSecret),
+		breakglass:    breakglass.New(mongoStore),
+	}, nil
+}
+
+func (s *Server) Routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /v1/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "api/openapi/openapi.yaml")
+	})
+	mux.HandleFunc("GET /v1/asyncapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "api/asyncapi/asyncapi.yaml")
+	})
+
+	authLimit := func(h http.Handler) http.Handler {
+		return s.limiter.Middleware(100, ipKey, h)
+	}
+	protected := func(h http.Handler) http.Handler {
+		return s.authz.RequireAuth(s.limiter.Middleware(1000, userKey, h))
+	}
+
+	mux.Handle("POST /v1/auth/register", authLimit(http.HandlerFunc(s.identity.Register)))
+	mux.Handle("POST /v1/auth/login", authLimit(http.HandlerFunc(s.identity.LoginMobile)))
+	mux.Handle("POST /v1/auth/web/login", authLimit(http.HandlerFunc(s.identity.LoginWeb)))
+	mux.Handle("POST /v1/auth/refresh", authLimit(http.HandlerFunc(s.identity.Refresh)))
+	mux.Handle("POST /v1/subscriptions/webhook", authLimit(http.HandlerFunc(s.subscriptions.StripeWebhook)))
+
+	mux.Handle("POST /v1/admin/break-glass/request", protected(s.authz.Authorize(
+		"break_glass_requests",
+		"break_glass:request",
+		[]string{models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.breakglass.Request),
+	)))
+	mux.Handle("POST /v1/admin/break-glass/{id}/approve", protected(s.authz.Authorize(
+		"break_glass_requests",
+		"break_glass:approve",
+		[]string{models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.breakglass.Approve),
+	)))
+
+	mux.Handle("POST /v1/sync/measurements", protected(s.authz.Authorize(
+		"health_measurements",
+		models.ScopeReadMeasurements,
+		[]string{models.RolePatient},
+		func(r *http.Request) string {
+			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
+				return claims.UserID
+			}
+			return ""
+		},
+		http.HandlerFunc(s.health.SyncMeasurements),
+	)))
+	mux.Handle("GET /v1/patients/{id}/measurements", protected(s.authz.Authorize(
+		"health_measurements",
+		models.ScopeReadMeasurements,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.health.ListMeasurements),
+	)))
+
+	mux.Handle("GET /v1/alerts/{id}", protected(s.authz.AuthorizeResolved(
+		"health_alerts",
+		models.ScopeReadAlerts,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) (string, error) {
+			alert, err := s.store.FindAlertByID(r.Context(), r.PathValue("id"))
+			return alert.PatientID, err
+		},
+		http.HandlerFunc(s.alerts.GetAlert),
+	)))
+	mux.Handle("POST /v1/alerts/{id}/acknowledge", protected(s.authz.AuthorizeResolved(
+		"health_alerts",
+		models.ScopeReadAlerts,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) (string, error) {
+			alert, err := s.store.FindAlertByID(r.Context(), r.PathValue("id"))
+			return alert.PatientID, err
+		},
+		http.HandlerFunc(s.alerts.Acknowledge),
+	)))
+
+	mux.Handle("GET /v1/patients/{id}", protected(s.authz.Authorize(
+		"patients",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.patients.GetPatient),
+	)))
+	mux.Handle("POST /v1/patients/{id}/clinical-records", protected(s.authz.Authorize(
+		"clinical_records",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.clinical.CreateClinicalRecord),
+	)))
+	mux.Handle("GET /v1/patients/{id}/clinical-records", protected(s.authz.Authorize(
+		"clinical_records",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.clinical.ListClinicalRecords),
+	)))
+	mux.Handle("POST /v1/patients/{id}/medications", protected(s.authz.Authorize(
+		"medications",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.clinical.CreateMedication),
+	)))
+	mux.Handle("GET /v1/patients/{id}/medications", protected(s.authz.Authorize(
+		"medications",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.clinical.ListMedications),
+	)))
+	mux.Handle("POST /v1/patients/{id}/medication-logs", protected(s.authz.Authorize(
+		"medication_logs",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.clinical.RecordMedicationLog),
+	)))
+	mux.Handle("POST /v1/patients/{id}/reports", protected(s.authz.Authorize(
+		"reports",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.reports.Create),
+	)))
+	mux.Handle("GET /v1/patients/{id}/reports", protected(s.authz.Authorize(
+		"reports",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.reports.List),
+	)))
+	mux.Handle("POST /v1/consents", protected(s.authz.Authorize(
+		"consents",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient},
+		func(r *http.Request) string {
+			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
+				return claims.UserID
+			}
+			return ""
+		},
+		http.HandlerFunc(s.consent.Grant),
+	)))
+	mux.Handle("DELETE /v1/consents/{caregiver_id}", protected(s.authz.Authorize(
+		"consents",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient},
+		func(r *http.Request) string {
+			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
+				return claims.UserID
+			}
+			return ""
+		},
+		http.HandlerFunc(s.consent.Revoke),
+	)))
+	mux.Handle("POST /v1/relationships", protected(s.authz.Authorize(
+		"relationships",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient},
+		func(r *http.Request) string {
+			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
+				return claims.UserID
+			}
+			return ""
+		},
+		http.HandlerFunc(s.relationships.AssignCaregiver),
+	)))
+	mux.Handle("DELETE /v1/relationships/{caregiver_id}", protected(s.authz.Authorize(
+		"relationships",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient},
+		func(r *http.Request) string {
+			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
+				return claims.UserID
+			}
+			return ""
+		},
+		http.HandlerFunc(s.relationships.RevokeCaregiver),
+	)))
+	mux.Handle("GET /v1/relationships", protected(s.authz.Authorize(
+		"relationships",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.relationships.List),
+	)))
+	mux.Handle("POST /v1/devices", protected(s.authz.Authorize(
+		"devices",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.devices.RegisterWearable),
+	)))
+	mux.Handle("GET /v1/devices", protected(s.authz.Authorize(
+		"devices",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.devices.ListDevices),
+	)))
+	mux.Handle("POST /v1/devices/{id}/transfer-requests", protected(s.authz.Authorize(
+		"device_transfer_requests",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.devices.RequestTransfer),
+	)))
+	mux.Handle("POST /v1/device-transfer-requests/{id}/approve", protected(s.authz.Authorize(
+		"device_transfer_requests",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.devices.ApproveTransfer),
+	)))
+	mux.Handle("POST /v1/device-transfer-requests/{id}/reject", protected(s.authz.Authorize(
+		"device_transfer_requests",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.devices.RejectTransfer),
+	)))
+	mux.Handle("POST /v1/notifications", protected(s.authz.Authorize(
+		"notifications",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.notifications.Create),
+	)))
+	mux.Handle("GET /v1/notifications", protected(s.authz.Authorize(
+		"notifications",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.notifications.List),
+	)))
+	mux.Handle("POST /v1/support-tickets", protected(s.authz.Authorize(
+		"support_tickets",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.support.Create),
+	)))
+	mux.Handle("GET /v1/support-tickets", protected(s.authz.Authorize(
+		"support_tickets",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.support.List),
+	)))
+	mux.Handle("GET /v1/realtime", protected(s.authz.Authorize(
+		"realtime",
+		models.ScopeReadMeasurements,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.realtime.Serve),
+	)))
+
+	return secureHeaders(mux)
+}

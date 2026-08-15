@@ -1,0 +1,633 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"strings"
+	"time"
+
+	"healthos/backend/internal/models"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/bsontype"
+	"go.mongodb.org/mongo-driver/event"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+)
+
+var ErrNotFound = errors.New("not found")
+
+type Mongo struct {
+	client *mongo.Client
+	db     *mongo.Database
+}
+
+func NewMongo(ctx context.Context, uri, database string) (*Mongo, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri).SetMonitor(auditLogCommandMonitor()))
+	if err != nil {
+		return nil, err
+	}
+	if err := client.Ping(ctx, nil); err != nil {
+		_ = client.Disconnect(context.Background())
+		return nil, err
+	}
+	return &Mongo{client: client, db: client.Database(database)}, nil
+}
+
+func auditLogCommandMonitor() *event.CommandMonitor {
+	return &event.CommandMonitor{
+		Started: func(ctx context.Context, evt *event.CommandStartedEvent) {
+			if forbiddenAuditMutation(evt) {
+				slog.ErrorContext(ctx, "audit_log_mutation_attempt",
+					"command", evt.CommandName,
+					"database", evt.DatabaseName,
+					"request_id", evt.RequestID,
+				)
+			}
+		},
+	}
+}
+
+func forbiddenAuditMutation(evt *event.CommandStartedEvent) bool {
+	if evt == nil {
+		return false
+	}
+	command := strings.ToLower(evt.CommandName)
+	switch command {
+	case "update", "delete", "findandmodify":
+	default:
+		return false
+	}
+	collectionKey := command
+	if command == "findandmodify" {
+		collectionKey = "findAndModify"
+	}
+	value := evt.Command.Lookup(collectionKey)
+	if value.Type != bsontype.String {
+		return false
+	}
+	return value.StringValue() == "audit_logs"
+}
+
+func (m *Mongo) Close(ctx context.Context) error {
+	return m.client.Disconnect(ctx)
+}
+
+func (m *Mongo) EnsureIndexes(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	if err := m.createCollections(ctx); err != nil {
+		return err
+	}
+
+	indexes := map[string][]mongo.IndexModel{
+		"users": {
+			{Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)},
+			{Keys: bson.D{{Key: "role", Value: 1}}},
+		},
+		"sessions": {
+			{Keys: bson.D{{Key: "user_id", Value: 1}}},
+			{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)},
+		},
+		"health_measurements": {
+			{Keys: bson.D{{Key: "patient_id", Value: 1}, {Key: "timestamp", Value: -1}}},
+			{Keys: bson.D{{Key: "device_id", Value: 1}}},
+		},
+		"health_alerts": {
+			{Keys: bson.D{{Key: "patient_id", Value: 1}, {Key: "created_at", Value: -1}}},
+		},
+		"relationships": {
+			{Keys: bson.D{{Key: "caregiver_id", Value: 1}, {Key: "patient_id", Value: 1}}, Options: options.Index().SetUnique(true)},
+			{Keys: bson.D{{Key: "caregiver_id", Value: 1}, {Key: "patient_id", Value: 1}, {Key: "status", Value: 1}}},
+		},
+		"consents": {
+			{Keys: bson.D{{Key: "patient_id", Value: 1}, {Key: "caregiver_id", Value: 1}, {Key: "revoked", Value: 1}}},
+		},
+		"audit_logs": {
+			{Keys: bson.D{{Key: "created_at", Value: -1}}},
+			{Keys: bson.D{{Key: "user_id", Value: 1}}},
+		},
+		"subscriptions": {
+			{Keys: bson.D{{Key: "stripe_event_id", Value: 1}}, Options: options.Index().SetUnique(true)},
+			{Keys: bson.D{{Key: "stripe_customer_id", Value: 1}}},
+			{Keys: bson.D{{Key: "stripe_subscription_id", Value: 1}}},
+		},
+		"clinical_records": {
+			{Keys: bson.D{{Key: "patient_id", Value: 1}}},
+		},
+		"medications": {
+			{Keys: bson.D{{Key: "patient_id", Value: 1}, {Key: "active", Value: 1}}},
+		},
+		"medication_logs": {
+			{Keys: bson.D{{Key: "patient_id", Value: 1}, {Key: "taken_at", Value: -1}}},
+		},
+		"devices": {
+			{Keys: bson.D{{Key: "owner_id", Value: 1}}},
+			{Keys: bson.D{{Key: "serial_number", Value: 1}}, Options: options.Index().SetUnique(true).SetSparse(true)},
+		},
+		"device_transfer_requests": {
+			{Keys: bson.D{{Key: "device_id", Value: 1}, {Key: "status", Value: 1}}},
+		},
+		"reports": {
+			{Keys: bson.D{{Key: "patient_id", Value: 1}, {Key: "created_at", Value: -1}}},
+		},
+		"notifications": {
+			{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "created_at", Value: -1}}},
+		},
+		"support_tickets": {
+			{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "status", Value: 1}}},
+		},
+		"break_glass_requests": {
+			{Keys: bson.D{{Key: "requester_id", Value: 1}, {Key: "status", Value: 1}}},
+			{Keys: bson.D{{Key: "expires_at", Value: 1}}},
+		},
+	}
+
+	for collection, models := range indexes {
+		if len(models) == 0 {
+			continue
+		}
+		if _, err := m.db.Collection(collection).Indexes().CreateMany(ctx, models); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Mongo) createCollections(ctx context.Context) error {
+	if err := m.createTimeSeriesIfMissing(ctx); err != nil {
+		return err
+	}
+	for _, name := range []string{
+		"users",
+		"sessions",
+		"health_alerts",
+		"clinical_records",
+		"medications",
+		"medication_logs",
+		"devices",
+		"device_transfer_requests",
+		"consents",
+		"audit_logs",
+		"subscriptions",
+		"reports",
+		"notifications",
+		"support_tickets",
+		"relationships",
+		"break_glass_requests",
+	} {
+		if err := m.createCollectionIfMissing(ctx, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Mongo) createCollectionIfMissing(ctx context.Context, name string) error {
+	names, err := m.db.ListCollectionNames(ctx, bson.M{"name": name})
+	if err != nil {
+		return err
+	}
+	if len(names) > 0 {
+		return nil
+	}
+	return m.db.CreateCollection(ctx, name)
+}
+
+func (m *Mongo) createTimeSeriesIfMissing(ctx context.Context) error {
+	names, err := m.db.ListCollectionNames(ctx, bson.M{"name": "health_measurements"})
+	if err != nil {
+		return err
+	}
+	if len(names) > 0 {
+		return nil
+	}
+	opts := options.CreateCollection().SetTimeSeriesOptions(options.TimeSeries().
+		SetTimeField("timestamp").
+		SetMetaField("patient_id").
+		SetGranularity("minutes"))
+	return m.db.CreateCollection(ctx, "health_measurements", opts)
+}
+
+func (m *Mongo) CreateUser(ctx context.Context, user models.User) error {
+	_, err := m.db.Collection("users").InsertOne(ctx, user)
+	return err
+}
+
+func (m *Mongo) FindUserByEmail(ctx context.Context, email string) (models.User, error) {
+	var user models.User
+	err := m.db.Collection("users").FindOne(ctx, bson.M{"email": email}).Decode(&user)
+	return user, normalizeFindErr(err)
+}
+
+func (m *Mongo) FindUserByID(ctx context.Context, id string) (models.User, error) {
+	var user models.User
+	err := m.db.Collection("users").FindOne(ctx, bson.M{"_id": id}).Decode(&user)
+	return user, normalizeFindErr(err)
+}
+
+func (m *Mongo) CreateSession(ctx context.Context, session models.Session) error {
+	_, err := m.db.Collection("sessions").InsertOne(ctx, session)
+	return err
+}
+
+func (m *Mongo) FindSessionByID(ctx context.Context, id string) (models.Session, error) {
+	var session models.Session
+	err := m.db.Collection("sessions").FindOne(ctx, bson.M{"_id": id}).Decode(&session)
+	return session, normalizeFindErr(err)
+}
+
+func (m *Mongo) DeleteSessionByID(ctx context.Context, id string) error {
+	_, err := m.db.Collection("sessions").DeleteOne(ctx, bson.M{"_id": id})
+	return err
+}
+
+func (m *Mongo) InsertMeasurements(ctx context.Context, measurements []models.Measurement) error {
+	if len(measurements) == 0 {
+		return nil
+	}
+	docs := make([]any, 0, len(measurements))
+	for _, measurement := range measurements {
+		docs = append(docs, measurement)
+	}
+	_, err := m.db.Collection("health_measurements").InsertMany(ctx, docs)
+	return err
+}
+
+func (m *Mongo) ListMeasurements(ctx context.Context, filter models.MeasurementFilter) ([]models.Measurement, error) {
+	query := bson.M{"patient_id": filter.PatientID}
+	if filter.Type != "" {
+		query["type"] = filter.Type
+	}
+	timeRange := bson.M{}
+	if !filter.From.IsZero() {
+		timeRange["$gte"] = filter.From
+	}
+	if !filter.To.IsZero() {
+		timeRange["$lte"] = filter.To
+	}
+	if len(timeRange) > 0 {
+		query["timestamp"] = timeRange
+	}
+	limit := filter.Limit
+	if limit == 0 {
+		limit = 100
+	}
+	cursor, err := m.db.Collection("health_measurements").Find(ctx, query, options.Find().
+		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
+		SetLimit(limit))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var measurements []models.Measurement
+	if err := cursor.All(ctx, &measurements); err != nil {
+		return nil, err
+	}
+	if measurements == nil {
+		measurements = []models.Measurement{}
+	}
+	return measurements, nil
+}
+
+func (m *Mongo) CreateAlert(ctx context.Context, alert models.Alert) error {
+	_, err := m.db.Collection("health_alerts").InsertOne(ctx, alert)
+	return err
+}
+
+func (m *Mongo) FindAlertByID(ctx context.Context, id string) (models.Alert, error) {
+	var alert models.Alert
+	err := m.db.Collection("health_alerts").FindOne(ctx, bson.M{"_id": id}).Decode(&alert)
+	return alert, normalizeFindErr(err)
+}
+
+func (m *Mongo) AcknowledgeAlert(ctx context.Context, id string) (models.Alert, error) {
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
+	var alert models.Alert
+	err := m.db.Collection("health_alerts").FindOneAndUpdate(
+		ctx,
+		bson.M{"_id": id},
+		bson.M{"$set": bson.M{"acknowledged": true}},
+		opts,
+	).Decode(&alert)
+	return alert, normalizeFindErr(err)
+}
+
+func (m *Mongo) HasActiveRelationship(ctx context.Context, caregiverID, patientID string) (bool, error) {
+	count, err := m.db.Collection("relationships").CountDocuments(ctx, bson.M{
+		"caregiver_id": caregiverID,
+		"patient_id":   patientID,
+		"status":       "active",
+	})
+	return count > 0, err
+}
+
+func (m *Mongo) UpsertRelationship(ctx context.Context, relationship models.Relationship) error {
+	_, err := m.db.Collection("relationships").UpdateOne(
+		ctx,
+		bson.M{
+			"caregiver_id": relationship.CaregiverID,
+			"patient_id":   relationship.PatientID,
+		},
+		bson.M{
+			"$set": bson.M{
+				"status":     relationship.Status,
+				"updated_at": relationship.UpdatedAt,
+			},
+			"$setOnInsert": bson.M{
+				"_id":          relationship.ID,
+				"caregiver_id": relationship.CaregiverID,
+				"patient_id":   relationship.PatientID,
+				"created_at":   relationship.CreatedAt,
+			},
+		},
+		options.Update().SetUpsert(true),
+	)
+	return err
+}
+
+func (m *Mongo) ListRelationshipsForUser(ctx context.Context, userID, role string) ([]models.Relationship, error) {
+	filter := bson.M{}
+	switch role {
+	case models.RolePatient:
+		filter = bson.M{"patient_id": userID}
+	case models.RoleCaregiver:
+		filter = bson.M{"caregiver_id": userID}
+	case models.RoleAdmin:
+		filter = bson.M{}
+	default:
+		filter = bson.M{"_id": "__none__"}
+	}
+	cursor, err := m.db.Collection("relationships").Find(ctx, filter, options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var relationships []models.Relationship
+	if err := cursor.All(ctx, &relationships); err != nil {
+		return nil, err
+	}
+	if relationships == nil {
+		relationships = []models.Relationship{}
+	}
+	return relationships, nil
+}
+
+func (m *Mongo) HasConsentScope(ctx context.Context, caregiverID, patientID, scope string) (bool, error) {
+	count, err := m.db.Collection("consents").CountDocuments(ctx, bson.M{
+		"caregiver_id": caregiverID,
+		"patient_id":   patientID,
+		"revoked":      false,
+		"scopes":       scope,
+	})
+	return count > 0, err
+}
+
+func (m *Mongo) UpsertConsent(ctx context.Context, consent models.Consent) error {
+	_, err := m.db.Collection("consents").UpdateOne(
+		ctx,
+		bson.M{
+			"patient_id":   consent.PatientID,
+			"caregiver_id": consent.CaregiverID,
+		},
+		bson.M{
+			"$set": bson.M{
+				"scopes":     consent.Scopes,
+				"revoked":    consent.Revoked,
+				"updated_at": consent.UpdatedAt,
+			},
+			"$setOnInsert": bson.M{
+				"_id":          consent.ID,
+				"patient_id":   consent.PatientID,
+				"caregiver_id": consent.CaregiverID,
+				"created_at":   consent.CreatedAt,
+			},
+		},
+		options.Update().SetUpsert(true),
+	)
+	return err
+}
+
+func (m *Mongo) WriteAudit(ctx context.Context, log models.AuditLog) error {
+	_, err := m.db.Collection("audit_logs").InsertOne(ctx, log)
+	return err
+}
+
+func (m *Mongo) CreateClinicalRecord(ctx context.Context, record models.ClinicalRecord) error {
+	_, err := m.db.Collection("clinical_records").InsertOne(ctx, record)
+	return err
+}
+
+func (m *Mongo) ListClinicalRecords(ctx context.Context, patientID string) ([]models.ClinicalRecord, error) {
+	cursor, err := m.db.Collection("clinical_records").Find(ctx, bson.M{"patient_id": patientID}, options.Find().SetSort(bson.D{{Key: "recorded_at", Value: -1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var records []models.ClinicalRecord
+	if err := cursor.All(ctx, &records); err != nil {
+		return nil, err
+	}
+	if records == nil {
+		records = []models.ClinicalRecord{}
+	}
+	return records, nil
+}
+
+func (m *Mongo) CreateMedication(ctx context.Context, medication models.Medication) error {
+	_, err := m.db.Collection("medications").InsertOne(ctx, medication)
+	return err
+}
+
+func (m *Mongo) ListMedications(ctx context.Context, patientID string) ([]models.Medication, error) {
+	cursor, err := m.db.Collection("medications").Find(ctx, bson.M{"patient_id": patientID}, options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var medications []models.Medication
+	if err := cursor.All(ctx, &medications); err != nil {
+		return nil, err
+	}
+	if medications == nil {
+		medications = []models.Medication{}
+	}
+	return medications, nil
+}
+
+func (m *Mongo) RecordMedicationLog(ctx context.Context, log models.MedicationLog) error {
+	_, err := m.db.Collection("medication_logs").InsertOne(ctx, log)
+	return err
+}
+
+func (m *Mongo) CreateDevice(ctx context.Context, device models.Device) error {
+	_, err := m.db.Collection("devices").InsertOne(ctx, device)
+	return err
+}
+
+func (m *Mongo) ListDevices(ctx context.Context, ownerID string) ([]models.Device, error) {
+	cursor, err := m.db.Collection("devices").Find(ctx, bson.M{"owner_id": ownerID}, options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var devices []models.Device
+	if err := cursor.All(ctx, &devices); err != nil {
+		return nil, err
+	}
+	if devices == nil {
+		devices = []models.Device{}
+	}
+	return devices, nil
+}
+
+func (m *Mongo) CreateDeviceTransferRequest(ctx context.Context, request models.DeviceTransferRequest) error {
+	_, err := m.db.Collection("device_transfer_requests").InsertOne(ctx, request)
+	return err
+}
+
+func (m *Mongo) FindDeviceTransferRequestByID(ctx context.Context, id string) (models.DeviceTransferRequest, error) {
+	var request models.DeviceTransferRequest
+	err := m.db.Collection("device_transfer_requests").FindOne(ctx, bson.M{"_id": id}).Decode(&request)
+	return request, normalizeFindErr(err)
+}
+
+func (m *Mongo) UpdateDeviceTransferRequestStatus(ctx context.Context, id, status string, updatedAt time.Time) (models.DeviceTransferRequest, error) {
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
+	var request models.DeviceTransferRequest
+	err := m.db.Collection("device_transfer_requests").FindOneAndUpdate(
+		ctx,
+		bson.M{"_id": id, "status": "pending"},
+		bson.M{"$set": bson.M{"status": status, "updated_at": updatedAt}},
+		opts,
+	).Decode(&request)
+	return request, normalizeFindErr(err)
+}
+
+func (m *Mongo) UpdateDeviceOwner(ctx context.Context, id, ownerID string, updatedAt time.Time) error {
+	result, err := m.db.Collection("devices").UpdateOne(
+		ctx,
+		bson.M{"_id": id},
+		bson.M{"$set": bson.M{"owner_id": ownerID, "updated_at": updatedAt}},
+	)
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (m *Mongo) CreateReport(ctx context.Context, report models.Report) error {
+	_, err := m.db.Collection("reports").InsertOne(ctx, report)
+	return err
+}
+
+func (m *Mongo) ListReports(ctx context.Context, patientID string) ([]models.Report, error) {
+	cursor, err := m.db.Collection("reports").Find(ctx, bson.M{"patient_id": patientID}, options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var reports []models.Report
+	if err := cursor.All(ctx, &reports); err != nil {
+		return nil, err
+	}
+	if reports == nil {
+		reports = []models.Report{}
+	}
+	return reports, nil
+}
+
+func (m *Mongo) CreateNotification(ctx context.Context, notification models.Notification) error {
+	_, err := m.db.Collection("notifications").InsertOne(ctx, notification)
+	return err
+}
+
+func (m *Mongo) ListNotifications(ctx context.Context, userID string) ([]models.Notification, error) {
+	cursor, err := m.db.Collection("notifications").Find(ctx, bson.M{"user_id": userID}, options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var notifications []models.Notification
+	if err := cursor.All(ctx, &notifications); err != nil {
+		return nil, err
+	}
+	if notifications == nil {
+		notifications = []models.Notification{}
+	}
+	return notifications, nil
+}
+
+func (m *Mongo) CreateSupportTicket(ctx context.Context, ticket models.SupportTicket) error {
+	_, err := m.db.Collection("support_tickets").InsertOne(ctx, ticket)
+	return err
+}
+
+func (m *Mongo) ListSupportTickets(ctx context.Context, userID string) ([]models.SupportTicket, error) {
+	cursor, err := m.db.Collection("support_tickets").Find(ctx, bson.M{"user_id": userID}, options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var tickets []models.SupportTicket
+	if err := cursor.All(ctx, &tickets); err != nil {
+		return nil, err
+	}
+	if tickets == nil {
+		tickets = []models.SupportTicket{}
+	}
+	return tickets, nil
+}
+
+func (m *Mongo) UpsertSubscriptionEvent(ctx context.Context, sub models.Subscription) error {
+	_, err := m.db.Collection("subscriptions").UpdateOne(
+		ctx,
+		bson.M{"stripe_event_id": sub.StripeEventID},
+		bson.M{"$setOnInsert": sub},
+		options.Update().SetUpsert(true),
+	)
+	return err
+}
+
+func (m *Mongo) CreateBreakGlassRequest(ctx context.Context, request models.BreakGlassRequest) error {
+	_, err := m.db.Collection("break_glass_requests").InsertOne(ctx, request)
+	return err
+}
+
+func (m *Mongo) FindBreakGlassRequestByID(ctx context.Context, id string) (models.BreakGlassRequest, error) {
+	var request models.BreakGlassRequest
+	err := m.db.Collection("break_glass_requests").FindOne(ctx, bson.M{"_id": id}).Decode(&request)
+	return request, normalizeFindErr(err)
+}
+
+func (m *Mongo) ApproveBreakGlassRequest(ctx context.Context, id, approverID string, approvedAt time.Time) (models.BreakGlassRequest, error) {
+	filter := bson.M{
+		"_id":          id,
+		"status":       "pending",
+		"requester_id": bson.M{"$ne": approverID},
+		"expires_at":   bson.M{"$gt": approvedAt},
+	}
+	update := bson.M{"$set": bson.M{
+		"status":      "approved",
+		"approver_id": approverID,
+		"approved_at": approvedAt,
+	}}
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
+	var request models.BreakGlassRequest
+	err := m.db.Collection("break_glass_requests").FindOneAndUpdate(ctx, filter, update, opts).Decode(&request)
+	return request, normalizeFindErr(err)
+}
+
+func normalizeFindErr(err error) error {
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return ErrNotFound
+	}
+	return err
+}

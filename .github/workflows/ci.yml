@@ -1,0 +1,102 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.13"
+          cache: true
+      - name: Download dependencies
+        run: go mod download
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: v2.4.0
+      - name: Vet
+        run: go vet ./...
+      - name: Unit tests with coverage
+        run: |
+          go test -race -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+          coverage=$(go tool cover -func=coverage.out | awk '/^total:/ { sub(/%/, "", $3); print $3 }')
+          awk -v coverage="$coverage" 'BEGIN { if (coverage < 80) exit 1 }'
+      - name: Integration tests with testcontainers
+        run: go test -race -tags=integration ./...
+      - name: SAST
+        uses: securego/gosec@v2.28.0
+        with:
+          args: ./...
+      - name: SCA
+        env:
+          NANCY_GUIDE_TOKEN: ${{ secrets.NANCY_GUIDE_TOKEN }}
+        run: |
+          test -n "$NANCY_GUIDE_TOKEN"
+          go install github.com/sonatype-nexus-community/nancy/v2@v2.1.0
+          go list -json -deps ./... | nancy sleuth --guide-token "$NANCY_GUIDE_TOKEN"
+      - name: Secret scan
+        uses: trufflesecurity/trufflehog@v3.96.0
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+      - name: Build image
+        run: docker build -t healthos-backend:latest .
+      - name: Container scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: healthos-backend:latest
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+
+  deploy-staging:
+    needs: verify
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy staging to Render
+        env:
+          RENDER_STAGING_DEPLOY_HOOK: ${{ secrets.RENDER_STAGING_DEPLOY_HOOK }}
+        run: |
+          test -n "$RENDER_STAGING_DEPLOY_HOOK"
+          curl -fsSL -X POST "$RENDER_STAGING_DEPLOY_HOOK"
+
+  dast:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: OWASP ZAP baseline
+        env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+        run: |
+          test -n "$STAGING_API_URL"
+          docker run --rm -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+            -t "$STAGING_API_URL" \
+            -r zap-report.html
+
+  deploy-production:
+    needs: dast
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Deploy production to Render
+        env:
+          RENDER_PROD_DEPLOY_HOOK: ${{ secrets.RENDER_PROD_DEPLOY_HOOK }}
+        run: |
+          test -n "$RENDER_PROD_DEPLOY_HOOK"
+          curl -fsSL -X POST "$RENDER_PROD_DEPLOY_HOOK"

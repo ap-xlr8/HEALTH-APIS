@@ -1,0 +1,5 @@
+.env
+.env.local
+results.json
+coverage.out
+.tools/

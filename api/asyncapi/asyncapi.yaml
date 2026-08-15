@@ -1,0 +1,80 @@
+asyncapi: 3.0.0
+info:
+  title: Health OS Realtime Events
+  version: 1.0.0
+channels:
+  realtime:
+    address: /v1/realtime
+    messages:
+      MeasurementIngested:
+        $ref: '#/components/messages/MeasurementIngested'
+      AlertCreated:
+        $ref: '#/components/messages/AlertCreated'
+      HealthEventCritical:
+        $ref: '#/components/messages/HealthEventCritical'
+      ConsentUpdated:
+        $ref: '#/components/messages/ConsentUpdated'
+operations:
+  receiveRealtime:
+    action: receive
+    channel:
+      $ref: '#/channels/realtime'
+    messages:
+      - $ref: '#/channels/realtime/messages/MeasurementIngested'
+      - $ref: '#/channels/realtime/messages/AlertCreated'
+      - $ref: '#/channels/realtime/messages/HealthEventCritical'
+      - $ref: '#/channels/realtime/messages/ConsentUpdated'
+components:
+  messages:
+    MeasurementIngested:
+      payload:
+        type: object
+        required: [type, patientId, metric, value, unit, occurredAt, eventId]
+        properties:
+          type: { type: string, const: measurement.ingested }
+          patientId: { type: string }
+          metric: { type: string, example: heart_rate }
+          value: { type: number, example: 78 }
+          unit: { type: string, example: bpm }
+          occurredAt: { type: string, format: date-time }
+          eventId: { type: string }
+    AlertCreated:
+      payload:
+        type: object
+        required: [type, alertId, patientId, level, metric, value, triggeredAt]
+        properties:
+          type: { type: string, const: alert.created }
+          alertId: { type: string }
+          patientId: { type: string }
+          level: { type: integer, minimum: 1, maximum: 4 }
+          metric: { type: string }
+          value: { type: number }
+          triggeredAt: { type: string, format: date-time }
+    HealthEventCritical:
+      payload:
+        type: object
+        required: [type, patientId, metric, value, location]
+        properties:
+          type: { type: string, const: health.event.critical }
+          patientId: { type: string }
+          metric: { type: string }
+          value: { type: number }
+          location:
+            type: object
+            nullable: true
+            properties:
+              lat: { type: number }
+              lng: { type: number }
+    ConsentUpdated:
+      payload:
+        type: object
+        required: [type, patientId, caregiverId, scopes, updatedAt, eventId]
+        properties:
+          type: { type: string, const: consent.updated }
+          patientId: { type: string }
+          caregiverId: { type: string }
+          scopes:
+            type: array
+            items: { type: string }
+          updatedAt: { type: string, format: date-time }
+          eventId: { type: string }
