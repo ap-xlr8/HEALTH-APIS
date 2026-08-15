@@ -88,6 +88,7 @@ func (m *Mongo) EnsureIndexes(ctx context.Context) error {
 		"users": {
 			{Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)},
 			{Keys: bson.D{{Key: "role", Value: 1}}},
+			{Keys: bson.D{{Key: "verification_token", Value: 1}}, Options: options.Index().SetSparse(true)},
 		},
 		"sessions": {
 			{Keys: bson.D{{Key: "user_id", Value: 1}}},
@@ -99,6 +100,7 @@ func (m *Mongo) EnsureIndexes(ctx context.Context) error {
 		},
 		"health_alerts": {
 			{Keys: bson.D{{Key: "patient_id", Value: 1}, {Key: "created_at", Value: -1}}},
+			{Keys: bson.D{{Key: "patient_id", Value: 1}, {Key: "acknowledged", Value: 1}, {Key: "created_at", Value: -1}}},
 		},
 		"relationships": {
 			{Keys: bson.D{{Key: "caregiver_id", Value: 1}, {Key: "patient_id", Value: 1}}, Options: options.Index().SetUnique(true)},
@@ -245,6 +247,12 @@ func (m *Mongo) DeleteSessionByID(ctx context.Context, id string) error {
 	_, err := m.db.Collection("sessions").DeleteOne(ctx, bson.M{"_id": id})
 	return err
 }
+
+func (m *Mongo) DeleteSessionsByUserID(ctx context.Context, userID string) error {
+	_, err := m.db.Collection("sessions").DeleteMany(ctx, bson.M{"user_id": userID})
+	return err
+}
+
 
 func (m *Mongo) InsertMeasurements(ctx context.Context, measurements []models.Measurement) error {
 	if len(measurements) == 0 {

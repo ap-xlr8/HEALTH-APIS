@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
+	"runtime"
 	"time"
 
 	"healthos/backend/internal/alerts"
@@ -53,6 +55,17 @@ type Server struct {
 func New(cfg config.Config, logger *slog.Logger, mongoStore *store.Mongo) (*Server, error) {
 	authzMiddleware := authz.New(cfg.JWTPublicKey, mongoStore)
 	hub := realtime.New(logger)
+	hub.SetAuthChecker(func(caregiverID, patientID string) bool {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if active, err := mongoStore.HasActiveRelationship(ctx, caregiverID, patientID); err == nil && active {
+			return true
+		}
+		if hasConsent, err := mongoStore.HasConsentScope(ctx, caregiverID, patientID, models.ScopeReadMeasurements); err == nil && hasConsent {
+			return true
+		}
+		return false
+	})
 	emailClient := email.NewSendGridClient(cfg.SendGridAPIKey, cfg.SendGridFromEmail, cfg.SendGridFromName)
 	return &Server{
 		cfg:           cfg,
@@ -96,10 +109,17 @@ func (s *Server) Routes() http.Handler {
 		})
 	})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		var memStats runtime.MemStats
+		runtime.ReadMemStats(&memStats)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"status":         "success",
-			"uptime_seconds": time.Since(s.startTime).Seconds(),
-			"environment":    s.cfg.Env,
+			"status":            "success",
+			"uptime_seconds":    time.Since(s.startTime).Seconds(),
+			"environment":       s.cfg.Env,
+			"goroutines":        runtime.NumGoroutine(),
+			"alloc_bytes":       memStats.Alloc,
+			"total_alloc_bytes": memStats.TotalAlloc,
+			"sys_bytes":         memStats.Sys,
+			"num_gc":            memStats.NumGC,
 		})
 	})
 	mux.HandleFunc("GET /v1/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +141,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /v1/auth/login", authLimit(http.HandlerFunc(s.identity.LoginMobile)))
 	mux.Handle("POST /v1/auth/web/login", authLimit(http.HandlerFunc(s.identity.LoginWeb)))
 	mux.Handle("POST /v1/auth/refresh", authLimit(http.HandlerFunc(s.identity.Refresh)))
+	mux.Handle("POST /v1/auth/logout", authLimit(http.HandlerFunc(s.identity.LogoutMobile)))
+	mux.Handle("POST /v1/auth/web/logout", authLimit(http.HandlerFunc(s.identity.LogoutWeb)))
 	mux.Handle("POST /v1/subscriptions/webhook", authLimit(http.HandlerFunc(s.subscriptions.StripeWebhook)))
 
 	mux.Handle("POST /v1/admin/break-glass/request", protected(s.authz.Authorize(
@@ -361,5 +383,5 @@ func (s *Server) Routes() http.Handler {
 		http.HandlerFunc(s.realtime.Serve),
 	)))
 
-	return secureHeaders(mux)
+	return secureHeaders(LoggingMiddleware(s.logger)(mux))
 }

@@ -115,6 +115,40 @@ paths:
                 $ref: '#/components/schemas/MobileLoginResponse'
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
+  /v1/auth/logout:
+    post:
+      tags: [AUTH]
+      summary: Logout de dispositivo móvil
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Sesión cerrada exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  message: { type: string }
+        '401': { $ref: '#/components/responses/Error' }
+  /v1/auth/web/logout:
+    post:
+      tags: [AUTH]
+      summary: Logout de sesión web e invalidación de cookies
+      responses:
+        '200':
+          description: Cookies de sesión expiradas y eliminadas
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  message: { type: string }
   /v1/sync/measurements:
     post:
       tags: [SYNC]

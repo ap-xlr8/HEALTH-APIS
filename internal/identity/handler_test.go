@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"healthos/backend/internal/authz"
 	"healthos/backend/internal/models"
 	"healthos/backend/internal/store"
 	"healthos/backend/pkg/security"
@@ -126,6 +127,15 @@ func (f *fakeIdentityStore) DeleteSessionByID(ctx context.Context, id string) er
 	return nil
 }
 
+func (f *fakeIdentityStore) DeleteSessionsByUserID(ctx context.Context, userID string) error {
+	for id, s := range f.sessions {
+		if s.UserID == userID {
+			delete(f.sessions, id)
+		}
+	}
+	return nil
+}
+
 func TestValidateRegister(t *testing.T) {
 	t.Parallel()
 	valid := registerRequest{
@@ -186,14 +196,11 @@ func TestRegisterVerifyAndLogin(t *testing.T) {
 		t.Fatalf("expected register 201, got %d body=%s", registerRes.Code, registerRes.Body.String())
 	}
 
-	var regData struct {
-		Data struct {
-			VerificationToken string `json:"verification_token"`
-		} `json:"data"`
+	savedUser, ok := fakeStore.usersByEmail["juan@example.com"]
+	if !ok || savedUser.VerificationToken == "" {
+		t.Fatalf("expected saved user with verification token in store")
 	}
-	if err := json.Unmarshal(registerRes.Body.Bytes(), &regData); err != nil {
-		t.Fatalf("decode register response: %v", err)
-	}
+	verificationToken := savedUser.VerificationToken
 
 	// Login before verifying must fail with 403 Forbidden
 	unverifiedLogin := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"juan@example.com","password":"Secure!1234"}`))
@@ -204,7 +211,7 @@ func TestRegisterVerifyAndLogin(t *testing.T) {
 	}
 
 	// Verify email
-	verifyReq := httptest.NewRequest(http.MethodPost, "/v1/auth/verify-email", strings.NewReader(`{"token":"`+regData.Data.VerificationToken+`"}`))
+	verifyReq := httptest.NewRequest(http.MethodPost, "/v1/auth/verify-email", strings.NewReader(`{"token":"`+verificationToken+`"}`))
 	verifyReq.Header.Set("Content-Type", "application/json")
 	verifyRes := httptest.NewRecorder()
 	handler.VerifyEmail(verifyRes, verifyReq)
@@ -483,6 +490,39 @@ func TestIdentityPersistenceErrors(t *testing.T) {
 	loginHandler.LoginMobile(loginRes, loginReq)
 	if loginRes.Code != http.StatusInternalServerError {
 		t.Fatalf("expected login session 500, got %d", loginRes.Code)
+	}
+}
+
+func TestLogoutWebAndMobile(t *testing.T) {
+	t.Parallel()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey returned error: %v", err)
+	}
+	fakeStore := newFakeIdentityStore()
+	fakeStore.sessions["ses_123"] = models.Session{ID: "ses_123", UserID: "usr_123"}
+	handler := New(fakeStore, privateKey, &privateKey.PublicKey, nil)
+
+	// Logout mobile
+	reqMob := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
+	reqMob = reqMob.WithContext(authz.WithClaims(reqMob.Context(), &security.Claims{UserID: "usr_123", Role: "patient"}))
+	resMob := httptest.NewRecorder()
+	handler.LogoutMobile(resMob, reqMob)
+	if resMob.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resMob.Code)
+	}
+
+	// Logout web
+	fakeStore.sessions["ses_456"] = models.Session{ID: "ses_456", UserID: "usr_456"}
+	reqWeb := httptest.NewRequest(http.MethodPost, "/v1/auth/web/logout", nil)
+	reqWeb = reqWeb.WithContext(authz.WithClaims(reqWeb.Context(), &security.Claims{UserID: "usr_456", Role: "patient"}))
+	resWeb := httptest.NewRecorder()
+	handler.LogoutWeb(resWeb, reqWeb)
+	if resWeb.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resWeb.Code)
+	}
+	if len(resWeb.Result().Cookies()) == 0 {
+		t.Fatalf("expected expired cookies in logout web response")
 	}
 }
 

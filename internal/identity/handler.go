@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/mongo"
 
+	"healthos/backend/internal/authz"
 	"healthos/backend/internal/models"
 	"healthos/backend/internal/store"
 	"healthos/backend/pkg/email"
@@ -34,6 +35,7 @@ type Store interface {
 	CreateSession(ctx context.Context, session models.Session) error
 	FindSessionByID(ctx context.Context, id string) (models.Session, error)
 	DeleteSessionByID(ctx context.Context, id string) error
+	DeleteSessionsByUserID(ctx context.Context, userID string) error
 }
 
 type Handler struct {
@@ -125,9 +127,8 @@ func (h Handler) Register(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"status": "success",
 		"data": map[string]string{
-			"user_id":            user.ID,
-			"verification_token": verificationToken,
-			"message":            "User registered successfully. Please verify your email.",
+			"user_id": user.ID,
+			"message": "User registered successfully. Please check your email to verify your account.",
 		},
 	})
 }
@@ -357,6 +358,58 @@ func (h Handler) login(w http.ResponseWriter, r *http.Request, web bool) {
 		"expires_in":    900,
 	})
 }
+
+func (h Handler) LogoutWeb(w http.ResponseWriter, r *http.Request) {
+	if claims, ok := authz.ClaimsFromContext(r.Context()); ok && claims != nil {
+		_ = h.store.DeleteSessionsByUserID(r.Context(), claims.UserID)
+	}
+	now := time.Now().UTC().Add(-24 * time.Hour)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "access_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  now,
+		MaxAge:   -1,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    "",
+		Path:     "/v1/auth",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  now,
+		MaxAge:   -1,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "csrf_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  now,
+		MaxAge:   -1,
+	})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{
+		"status":  "success",
+		"message": "Logged out successfully",
+	})
+}
+
+func (h Handler) LogoutMobile(w http.ResponseWriter, r *http.Request) {
+	if claims, ok := authz.ClaimsFromContext(r.Context()); ok && claims != nil {
+		_ = h.store.DeleteSessionsByUserID(r.Context(), claims.UserID)
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{
+		"status":  "success",
+		"message": "Logged out successfully",
+	})
+}
+
 
 func generate6DigitOTP() string {
 	n, err := rand.Int(rand.Reader, big.NewInt(900000))

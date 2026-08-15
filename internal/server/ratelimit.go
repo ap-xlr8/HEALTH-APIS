@@ -72,6 +72,15 @@ func (rl *RateLimiter) cleanup() {
 }
 
 func ipKey(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+			return strings.TrimSpace(parts[0])
+		}
+	}
+	if xrip := r.Header.Get("X-Real-IP"); xrip != "" {
+		return strings.TrimSpace(xrip)
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
 		return host
@@ -88,6 +97,21 @@ func userKey(r *http.Request) string {
 
 func secureHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token, X-Forwarded-For, Accept, Origin, X-Request-ID")
+			w.Header().Set("Access-Control-Expose-Headers", "X-CSRF-Token, Content-Disposition, X-Request-ID")
+		}
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; object-src 'none'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -99,3 +123,4 @@ func secureHeaders(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+

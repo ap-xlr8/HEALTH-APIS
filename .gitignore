@@ -2,6 +2,7 @@
 .env.local
 results.json
 coverage.out
+coverage*
 .tools/
 *.exe
 
