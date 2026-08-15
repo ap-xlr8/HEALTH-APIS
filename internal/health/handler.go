@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"healthos/backend/internal/authz"
+	"healthos/backend/internal/ml"
 	"healthos/backend/internal/models"
 	"healthos/backend/pkg/httpx"
 )
@@ -104,11 +105,22 @@ func (h Handler) SyncMeasurements(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	// 3. ML Risk and Anomaly Evaluation
+	var mlRiskResult *ml.RiskResult
+	if evaluatedRisk, err := ml.Default().EvaluateMeasurements(measurements); err == nil {
+		mlRiskResult = &evaluatedRisk
+	}
+
+	responsePayload := map[string]any{
 		"status":           "success",
 		"synced_count":     len(measurements),
 		"alerts_triggered": alertsTriggered,
-	})
+	}
+	if mlRiskResult != nil {
+		responsePayload["ml_risk"] = mlRiskResult
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, responsePayload)
 }
 
 func (h Handler) createAlertNotification(ctx context.Context, alert models.Alert, measurement models.Measurement) {

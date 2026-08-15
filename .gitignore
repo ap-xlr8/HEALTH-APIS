@@ -3,3 +3,5 @@
 results.json
 coverage.out
 .tools/
+*.exe
+
