@@ -127,8 +127,9 @@ func (h Handler) Register(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"status": "success",
 		"data": map[string]string{
-			"user_id": user.ID,
-			"message": "User registered successfully. Please check your email to verify your account.",
+			"user_id":            user.ID,
+			"verification_token": verificationToken,
+			"message":            "User registered successfully. Please check your email to verify your account.",
 		},
 	})
 }
@@ -286,7 +287,18 @@ func (h Handler) login(w http.ResponseWriter, r *http.Request, web bool) {
 	}
 
 	if !user.EmailVerified && user.Role != models.RoleAdmin {
-		httpx.WriteError(w, http.StatusForbidden, "email is not verified; please verify your email before logging in")
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{
+			"status":  "error",
+			"message": "email is not verified; please verify your email before logging in",
+			"data": map[string]string{
+				"verification_token": user.VerificationToken,
+				"email":              user.Email,
+			},
+			"error": map[string]string{
+				"code":    "email_not_verified",
+				"message": "email is not verified; please verify your email before logging in",
+			},
+		})
 		return
 	}
 
