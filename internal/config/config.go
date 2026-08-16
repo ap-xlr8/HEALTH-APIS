@@ -50,7 +50,7 @@ func Load() (Config, error) {
 		SendGridAPIKey:      os.Getenv("SENDGRID_API_KEY"),
 		SendGridFromEmail:   getEnv("SENDGRID_FROM_EMAIL", "notifications@healthos.app"),
 		SendGridFromName:    getEnv("SENDGRID_FROM_NAME", "BioGuard Health Platform"),
-		AllowedOrigins:      parseOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,https://healthos-web.onrender.com,https://health-apis.onrender.com")),
+		AllowedOrigins:      parseOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,https://healthos-web.onrender.com,https://health-web-3twb.onrender.com,https://health-apis.onrender.com")),
 		InternalAPIToken:    os.Getenv("INTERNAL_API_TOKEN"),
 	}
 
