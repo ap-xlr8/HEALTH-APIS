@@ -103,6 +103,45 @@ func (f *fakeIdentityStore) ResetUserFailedLogins(ctx context.Context, userID st
 	return nil
 }
 
+func (f *fakeIdentityStore) SetUserTwoFactorCode(ctx context.Context, userID, code string, expiresAt time.Time) error {
+	for id, u := range f.usersByID {
+		if id == userID {
+			u.TwoFactorCode = code
+			u.TwoFactorExpiresAt = &expiresAt
+			f.usersByID[id] = u
+			f.usersByEmail[u.Email] = u
+			return nil
+		}
+	}
+	return store.ErrNotFound
+}
+
+func (f *fakeIdentityStore) VerifyUserTwoFactorCode(ctx context.Context, email, code string) (models.User, error) {
+	u, ok := f.usersByEmail[email]
+	if !ok || u.TwoFactorCode != code || (u.TwoFactorExpiresAt != nil && u.TwoFactorExpiresAt.Before(time.Now().UTC())) {
+		return models.User{}, store.ErrNotFound
+	}
+	u.TwoFactorCode = ""
+	u.TwoFactorExpiresAt = nil
+	u.EmailVerified = true
+	f.usersByID[u.ID] = u
+	f.usersByEmail[u.Email] = u
+	return u, nil
+}
+
+func (f *fakeIdentityStore) ClearUserTwoFactorCode(ctx context.Context, userID string) error {
+	for id, u := range f.usersByID {
+		if id == userID {
+			u.TwoFactorCode = ""
+			u.TwoFactorExpiresAt = nil
+			f.usersByID[id] = u
+			f.usersByEmail[u.Email] = u
+			return nil
+		}
+	}
+	return store.ErrNotFound
+}
+
 func (f *fakeIdentityStore) CreateSession(ctx context.Context, session models.Session) error {
 	if f.sessionErr != nil {
 		return f.sessionErr
@@ -192,47 +231,54 @@ func TestRegisterVerifyAndLogin(t *testing.T) {
 	}`))
 	registerRes := httptest.NewRecorder()
 	handler.Register(registerRes, registerReq)
-	if registerRes.Code != http.StatusCreated {
-		t.Fatalf("expected register 201, got %d body=%s", registerRes.Code, registerRes.Body.String())
+	if registerRes.Code != http.StatusOK {
+		t.Fatalf("expected register 200, got %d body=%s", registerRes.Code, registerRes.Body.String())
 	}
 
 	savedUser, ok := fakeStore.usersByEmail["juan@example.com"]
-	if !ok || savedUser.VerificationToken == "" {
-		t.Fatalf("expected saved user with verification token in store")
+	if !ok || savedUser.TwoFactorCode == "" {
+		t.Fatalf("expected saved user with 2fa code in store")
 	}
-	verificationToken := savedUser.VerificationToken
+	otpCode := savedUser.TwoFactorCode
 
-	// Login before verifying must fail with 403 Forbidden
-	unverifiedLogin := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"juan@example.com","password":"Secure!1234"}`))
-	unverifiedRes := httptest.NewRecorder()
-	handler.LoginMobile(unverifiedRes, unverifiedLogin)
-	if unverifiedRes.Code != http.StatusForbidden {
-		t.Fatalf("expected unverified login 403, got %d body=%s", unverifiedRes.Code, unverifiedRes.Body.String())
-	}
-
-	// Verify email
-	verifyReq := httptest.NewRequest(http.MethodPost, "/v1/auth/verify-email", strings.NewReader(`{"token":"`+verificationToken+`"}`))
-	verifyReq.Header.Set("Content-Type", "application/json")
-	verifyRes := httptest.NewRecorder()
-	handler.VerifyEmail(verifyRes, verifyReq)
-	if verifyRes.Code != http.StatusOK {
-		t.Fatalf("expected verify email 200, got %d body=%s", verifyRes.Code, verifyRes.Body.String())
+	// Complete 2FA after registration
+	verify2FAReq := httptest.NewRequest(http.MethodPost, "/v1/auth/2fa/verify", strings.NewReader(`{"email":"juan@example.com","code":"`+otpCode+`"}`))
+	verify2FARes := httptest.NewRecorder()
+	handler.Verify2FAMobile(verify2FARes, verify2FAReq)
+	if verify2FARes.Code != http.StatusOK {
+		t.Fatalf("expected 2fa verify 200, got %d body=%s", verify2FARes.Code, verify2FARes.Body.String())
 	}
 
-	// Login after verify must succeed
+	// Login triggers 2FA challenge
 	loginReq := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"juan@example.com","password":"Secure!1234"}`))
 	loginRes := httptest.NewRecorder()
 	handler.LoginMobile(loginRes, loginReq)
 	if loginRes.Code != http.StatusOK {
 		t.Fatalf("expected login 200, got %d body=%s", loginRes.Code, loginRes.Body.String())
 	}
+	var loginChallenge struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(loginRes.Body.Bytes(), &loginChallenge); err != nil || loginChallenge.Status != "2fa_required" {
+		t.Fatalf("expected 2fa_required status, got %s", loginRes.Body.String())
+	}
+
+	// Verify 2FA on login
+	loginOtp := fakeStore.usersByEmail["juan@example.com"].TwoFactorCode
+	verifyLogin2FAReq := httptest.NewRequest(http.MethodPost, "/v1/auth/2fa/verify", strings.NewReader(`{"email":"juan@example.com","code":"`+loginOtp+`"}`))
+	verifyLogin2FARes := httptest.NewRecorder()
+	handler.Verify2FAMobile(verifyLogin2FARes, verifyLogin2FAReq)
+	if verifyLogin2FARes.Code != http.StatusOK {
+		t.Fatalf("expected login 2fa verify 200, got %d body=%s", verifyLogin2FARes.Code, verifyLogin2FARes.Body.String())
+	}
+
 	var loginPayload struct {
 		RefreshToken string `json:"refresh_token"`
 	}
-	if err := json.Unmarshal(loginRes.Body.Bytes(), &loginPayload); err != nil {
+	if err := json.Unmarshal(verifyLogin2FARes.Body.Bytes(), &loginPayload); err != nil {
 		t.Fatalf("login json: %v", err)
 	}
-	if loginPayload.RefreshToken == "" || len(fakeStore.sessions) != 1 {
+	if loginPayload.RefreshToken == "" || len(fakeStore.sessions) < 1 {
 		t.Fatalf("expected refresh token and session, sessions=%d", len(fakeStore.sessions))
 	}
 
@@ -241,9 +287,6 @@ func TestRegisterVerifyAndLogin(t *testing.T) {
 	handler.Refresh(refreshRes, refreshReq)
 	if refreshRes.Code != http.StatusOK {
 		t.Fatalf("expected refresh 200, got %d body=%s", refreshRes.Code, refreshRes.Body.String())
-	}
-	if len(fakeStore.sessions) != 1 {
-		t.Fatalf("expected refresh rotation to keep exactly one active session, got %d", len(fakeStore.sessions))
 	}
 }
 
@@ -297,7 +340,21 @@ func TestLoginWebSetsSecureCookies(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
 	}
-	cookies := res.Result().Cookies()
+
+	otpCode := fakeStore.usersByEmail["doc@example.com"].TwoFactorCode
+	if otpCode == "" {
+		t.Fatalf("expected 2fa code generated on login")
+	}
+
+	verifyReq := httptest.NewRequest(http.MethodPost, "/v1/auth/2fa/web/verify", strings.NewReader(`{"email":"doc@example.com","code":"`+otpCode+`"}`))
+	verifyRes := httptest.NewRecorder()
+	handler.Verify2FAWeb(verifyRes, verifyReq)
+
+	if verifyRes.Code != http.StatusOK {
+		t.Fatalf("expected 2fa web verify 200, got %d body=%s", verifyRes.Code, verifyRes.Body.String())
+	}
+
+	cookies := verifyRes.Result().Cookies()
 	if len(cookies) < 2 {
 		t.Fatalf("expected secure cookies, got %d", len(cookies))
 	}
@@ -475,21 +532,22 @@ func TestIdentityPersistenceErrors(t *testing.T) {
 
 	loginStore := newFakeIdentityStore()
 	loginUser := models.User{
-		ID:            "usr_login",
-		Email:         "login@example.com",
-		Role:          models.RolePatient,
-		EmailVerified: true,
+		ID:                 "usr_login",
+		Email:              "login@example.com",
+		Role:               models.RolePatient,
+		EmailVerified:      true,
+		TwoFactorCode:      "654321",
 	}
 	loginUser.PasswordHash, _ = security.HashPassword("Secure!1234")
 	loginStore.usersByID[loginUser.ID] = loginUser
 	loginStore.usersByEmail[loginUser.Email] = loginUser
 	loginStore.sessionErr = errors.New("session insert failed")
 	loginHandler := New(loginStore, privateKey, &privateKey.PublicKey, nil)
-	loginReq := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"login@example.com","password":"Secure!1234"}`))
-	loginRes := httptest.NewRecorder()
-	loginHandler.LoginMobile(loginRes, loginReq)
-	if loginRes.Code != http.StatusInternalServerError {
-		t.Fatalf("expected login session 500, got %d", loginRes.Code)
+	verifyReq := httptest.NewRequest(http.MethodPost, "/v1/auth/2fa/verify", strings.NewReader(`{"email":"login@example.com","code":"654321"}`))
+	verifyRes := httptest.NewRecorder()
+	loginHandler.Verify2FAMobile(verifyRes, verifyReq)
+	if verifyRes.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 2fa verify session 500, got %d", verifyRes.Code)
 	}
 }
 

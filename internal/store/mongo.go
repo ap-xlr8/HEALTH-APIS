@@ -674,6 +674,50 @@ func (m *Mongo) VerifyUserEmail(ctx context.Context, token string) (models.User,
 	return user, normalizeFindErr(err)
 }
 
+func (m *Mongo) SetUserTwoFactorCode(ctx context.Context, userID, code string, expiresAt time.Time) error {
+	update := bson.M{
+		"$set": bson.M{
+			"two_factor_code":       code,
+			"two_factor_expires_at": expiresAt,
+		},
+	}
+	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
+	return err
+}
+
+func (m *Mongo) VerifyUserTwoFactorCode(ctx context.Context, email, code string) (models.User, error) {
+	now := time.Now().UTC()
+	filter := bson.M{
+		"email":                 strings.ToLower(strings.TrimSpace(email)),
+		"two_factor_code":       strings.TrimSpace(code),
+		"two_factor_expires_at": bson.M{"$gt": now},
+	}
+	update := bson.M{
+		"$set": bson.M{
+			"email_verified": true,
+		},
+		"$unset": bson.M{
+			"two_factor_code":       "",
+			"two_factor_expires_at": "",
+		},
+	}
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
+	var user models.User
+	err := m.db.Collection("users").FindOneAndUpdate(ctx, filter, update, opts).Decode(&user)
+	return user, normalizeFindErr(err)
+}
+
+func (m *Mongo) ClearUserTwoFactorCode(ctx context.Context, userID string) error {
+	update := bson.M{
+		"$unset": bson.M{
+			"two_factor_code":       "",
+			"two_factor_expires_at": "",
+		},
+	}
+	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
+	return err
+}
+
 func (m *Mongo) UpdateUserFailedLogins(ctx context.Context, userID string, attempts int, lockoutUntil *time.Time) error {
 	update := bson.M{
 		"$set": bson.M{

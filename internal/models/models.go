@@ -32,6 +32,8 @@ type User struct {
 	EmailVerified         bool       `bson:"email_verified" json:"email_verified"`
 	VerificationToken     string     `bson:"verification_token,omitempty" json:"-"`
 	VerificationExpiresAt *time.Time `bson:"verification_expires_at,omitempty" json:"-"`
+	TwoFactorCode         string     `bson:"two_factor_code,omitempty" json:"-"`
+	TwoFactorExpiresAt    *time.Time `bson:"two_factor_expires_at,omitempty" json:"-"`
 	FailedLoginAttempts   int        `bson:"failed_login_attempts,omitempty" json:"-"`
 	LockoutUntil          *time.Time `bson:"lockout_until,omitempty" json:"-"`
 	CreatedAt             time.Time  `bson:"created_at" json:"created_at"`

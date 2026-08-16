@@ -96,6 +96,81 @@ paths:
                 $ref: '#/components/schemas/WebLoginResponse'
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
+  /v1/auth/2fa/verify:
+    post:
+      tags: [AUTH]
+      summary: Validar codigo OTP 2FA para Mobile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, example: "123456" }
+      responses:
+        '200':
+          description: Tokens de sesion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileLoginResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /v1/auth/2fa/web/verify:
+    post:
+      tags: [AUTH]
+      summary: Validar codigo OTP 2FA para Web
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, example: "123456" }
+      responses:
+        '200':
+          description: Sesion web con Set-Cookie
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebLoginResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /v1/auth/2fa/resend:
+    post:
+      tags: [AUTH]
+      summary: Reenviar codigo OTP 2FA al correo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: Codigo 2FA reenviado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  message: { type: string }
+                  expires_in: { type: integer, example: 600 }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /v1/auth/refresh:
     post:
       tags: [AUTH]

@@ -30,6 +30,9 @@ type Store interface {
 	FindUserByID(ctx context.Context, id string) (models.User, error)
 	FindUserByVerificationToken(ctx context.Context, token string) (models.User, error)
 	VerifyUserEmail(ctx context.Context, token string) (models.User, error)
+	SetUserTwoFactorCode(ctx context.Context, userID, code string, expiresAt time.Time) error
+	VerifyUserTwoFactorCode(ctx context.Context, email, code string) (models.User, error)
+	ClearUserTwoFactorCode(ctx context.Context, userID string) error
 	UpdateUserFailedLogins(ctx context.Context, userID string, attempts int, lockoutUntil *time.Time) error
 	ResetUserFailedLogins(ctx context.Context, userID string) error
 	CreateSession(ctx context.Context, session models.Session) error
@@ -75,6 +78,15 @@ type verifyEmailRequest struct {
 	Token string `json:"token"`
 }
 
+type twoFactorVerifyRequest struct {
+	Email string `json:"email"`
+	Code  string `json:"code"`
+}
+
+type twoFactorResendRequest struct {
+	Email string `json:"email"`
+}
+
 func (h Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -94,21 +106,20 @@ func (h Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	verificationToken := "vtok_" + uuid.NewString()
 	otpCode := generate6DigitOTP()
-	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+	expiresAt := time.Now().UTC().Add(10 * time.Minute)
 
 	user := models.User{
-		ID:                    "usr_" + uuid.NewString(),
-		Email:                 req.Email,
-		PasswordHash:          passwordHash,
-		Role:                  req.Role,
-		FirstName:             req.FirstName,
-		LastName:              req.LastName,
-		EmailVerified:         false,
-		VerificationToken:     verificationToken,
-		VerificationExpiresAt: &expiresAt,
-		CreatedAt:             time.Now().UTC(),
+		ID:                 "usr_" + uuid.NewString(),
+		Email:              req.Email,
+		PasswordHash:       passwordHash,
+		Role:               req.Role,
+		FirstName:          req.FirstName,
+		LastName:           req.LastName,
+		EmailVerified:      true,
+		TwoFactorCode:      otpCode,
+		TwoFactorExpiresAt: &expiresAt,
+		CreatedAt:          time.Now().UTC(),
 	}
 	if err := h.store.CreateUser(r.Context(), user); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
@@ -121,15 +132,16 @@ func (h Handler) Register(w http.ResponseWriter, r *http.Request) {
 
 	if h.emailSender != nil {
 		fullName := strings.TrimSpace(user.FirstName + " " + user.LastName)
-		_ = h.emailSender.SendVerificationEmail(r.Context(), user.Email, fullName, verificationToken, otpCode)
+		_ = h.emailSender.Send2FACode(r.Context(), user.Email, fullName, otpCode, "creación de cuenta")
 	}
 
-	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
-		"status": "success",
-		"data": map[string]string{
-			"user_id":            user.ID,
-			"verification_token": verificationToken,
-			"message":            "User registered successfully. Please check your email to verify your account.",
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status":  "2fa_required",
+		"message": "Código de verificación de 6 dígitos enviado a tu correo.",
+		"data": map[string]any{
+			"user_id":    user.ID,
+			"email":      user.Email,
+			"expires_in": 600,
 		},
 	})
 }
@@ -175,6 +187,146 @@ func (h Handler) LoginMobile(w http.ResponseWriter, r *http.Request) {
 
 func (h Handler) LoginWeb(w http.ResponseWriter, r *http.Request) {
 	h.login(w, r, true)
+}
+
+func (h Handler) Verify2FAMobile(w http.ResponseWriter, r *http.Request) {
+	h.verify2FA(w, r, false)
+}
+
+func (h Handler) Verify2FAWeb(w http.ResponseWriter, r *http.Request) {
+	h.verify2FA(w, r, true)
+}
+
+func (h Handler) Resend2FA(w http.ResponseWriter, r *http.Request) {
+	var req twoFactorResendRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if email == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "email is required")
+		return
+	}
+	user, err := h.store.FindUserByEmail(r.Context(), email)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+
+	otpCode := generate6DigitOTP()
+	expiresAt := time.Now().UTC().Add(10 * time.Minute)
+	if err := h.store.SetUserTwoFactorCode(r.Context(), user.ID, otpCode, expiresAt); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to update 2fa code")
+		return
+	}
+
+	if h.emailSender != nil {
+		fullName := strings.TrimSpace(user.FirstName + " " + user.LastName)
+		_ = h.emailSender.Send2FACode(r.Context(), user.Email, fullName, otpCode, "verificación de seguridad")
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status":     "success",
+		"message":    "Nuevo código 2FA enviado a tu correo.",
+		"expires_in": 600,
+	})
+}
+
+func (h Handler) verify2FA(w http.ResponseWriter, r *http.Request, web bool) {
+	var req twoFactorVerifyRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	code := strings.TrimSpace(req.Code)
+	if email == "" || code == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "email and code are required")
+		return
+	}
+
+	user, err := h.store.VerifyUserTwoFactorCode(r.Context(), email, code)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.WriteError(w, http.StatusUnauthorized, "código 2FA inválido o expirado (válido por 10 minutos)")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "2fa verification failed")
+		return
+	}
+
+	now := time.Now().UTC()
+	access, _, err := security.SignJWT(h.privateKey, user.ID, user.Role, "access", 15*time.Minute)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "token signing failed")
+		return
+	}
+	refresh, refreshID, err := security.SignJWT(h.privateKey, user.ID, user.Role, "refresh", 7*24*time.Hour)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "token signing failed")
+		return
+	}
+
+	if err := h.store.CreateSession(r.Context(), models.Session{
+		ID:        refreshID,
+		UserID:    user.ID,
+		Kind:      "refresh",
+		ExpiresAt: now.Add(7 * 24 * time.Hour),
+		CreatedAt: now,
+	}); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "refresh session persistence failed")
+		return
+	}
+
+	if web {
+		csrf := uuid.NewString()
+		http.SetCookie(w, &http.Cookie{
+			Name:     "access_token",
+			Value:    access,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteStrictMode,
+			Expires:  now.Add(15 * time.Minute),
+		})
+		http.SetCookie(w, &http.Cookie{
+			Name:     "refresh_token",
+			Value:    refresh,
+			Path:     "/v1/auth",
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteStrictMode,
+			Expires:  now.Add(7 * 24 * time.Hour),
+		})
+		http.SetCookie(w, &http.Cookie{
+			Name:     "csrf_token",
+			Value:    csrf,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteStrictMode,
+			Expires:  now.Add(15 * time.Minute),
+		})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status":       "success",
+			"csrf_token":   csrf,
+			"access_token": access,
+			"message":      "2FA authentication successful",
+		})
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"access_token":  access,
+		"refresh_token": refresh,
+		"expires_in":    900,
+		"role":          user.Role,
+	})
 }
 
 func (h Handler) Refresh(w http.ResponseWriter, r *http.Request) {
@@ -286,88 +438,30 @@ func (h Handler) login(w http.ResponseWriter, r *http.Request, web bool) {
 		return
 	}
 
-	if !user.EmailVerified && user.Role != models.RoleAdmin {
-		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{
-			"status":  "error",
-			"message": "email is not verified; please verify your email before logging in",
-			"data": map[string]string{
-				"verification_token": user.VerificationToken,
-				"email":              user.Email,
-			},
-			"error": map[string]string{
-				"code":    "email_not_verified",
-				"message": "email is not verified; please verify your email before logging in",
-			},
-		})
-		return
-	}
-
 	if user.FailedLoginAttempts > 0 || user.LockoutUntil != nil {
 		_ = h.store.ResetUserFailedLogins(r.Context(), user.ID)
 	}
 
-	access, _, err := security.SignJWT(h.privateKey, user.ID, user.Role, "access", 15*time.Minute)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "token signing failed")
-		return
-	}
-	refresh, refreshID, err := security.SignJWT(h.privateKey, user.ID, user.Role, "refresh", 7*24*time.Hour)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "token signing failed")
+	otpCode := generate6DigitOTP()
+	expiresAt := now.Add(10 * time.Minute)
+	if err := h.store.SetUserTwoFactorCode(r.Context(), user.ID, otpCode, expiresAt); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to generate 2fa challenge")
 		return
 	}
 
-	if err := h.store.CreateSession(r.Context(), models.Session{
-		ID:        refreshID,
-		UserID:    user.ID,
-		Kind:      "refresh",
-		ExpiresAt: now.Add(7 * 24 * time.Hour),
-		CreatedAt: now,
-	}); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "refresh session persistence failed")
-		return
+	if h.emailSender != nil {
+		fullName := strings.TrimSpace(user.FirstName + " " + user.LastName)
+		_ = h.emailSender.Send2FACode(r.Context(), user.Email, fullName, otpCode, "inicio de sesión")
 	}
 
-	if web {
-		csrf := uuid.NewString()
-		http.SetCookie(w, &http.Cookie{
-			Name:     "access_token",
-			Value:    access,
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   true,
-			SameSite: http.SameSiteStrictMode,
-			Expires:  now.Add(15 * time.Minute),
-		})
-		http.SetCookie(w, &http.Cookie{
-			Name:     "refresh_token",
-			Value:    refresh,
-			Path:     "/v1/auth",
-			HttpOnly: true,
-			Secure:   true,
-			SameSite: http.SameSiteStrictMode,
-			Expires:  now.Add(7 * 24 * time.Hour),
-		})
-		http.SetCookie(w, &http.Cookie{
-			Name:     "csrf_token",
-			Value:    csrf,
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   true,
-			SameSite: http.SameSiteStrictMode,
-			Expires:  now.Add(15 * time.Minute),
-		})
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{
-			"status":     "success",
-			"csrf_token": csrf,
-			"message":    "Logged in successfully",
-		})
-		return
-	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"access_token":  access,
-		"refresh_token": refresh,
-		"expires_in":    900,
+		"status":  "2fa_required",
+		"message": "Código de seguridad de 6 dígitos enviado a tu correo.",
+		"data": map[string]any{
+			"user_id":    user.ID,
+			"email":      user.Email,
+			"expires_in": 600,
+		},
 	})
 }
 
