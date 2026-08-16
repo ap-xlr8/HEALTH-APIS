@@ -54,14 +54,20 @@ func (f *fakeBroadcaster) Broadcast(payload any) {
 
 func TestValidateSync(t *testing.T) {
 	t.Parallel()
+	sq := 0.98
+	cd := int64(12)
 	req := syncRequest{
 		DeviceID: "dev_998877",
 		Data: []measurementInput{
 			{
-				Type:      "heart_rate",
-				Value:     75.5,
-				Unit:      "bpm",
-				Timestamp: "2023-10-15T14:30:00Z",
+				Type:          "heart_rate",
+				Value:         75.5,
+				Unit:          "bpm",
+				Timestamp:     "2023-10-15T14:30:00Z",
+				SignalQuality: &sq,
+				ClockDriftMs:  &cd,
+				SensorSource:  "ppg",
+				SessionID:     "sess_1",
 			},
 			{
 				Type:      "blood_oxygen",
@@ -75,17 +81,32 @@ func TestValidateSync(t *testing.T) {
 				Unit:      "count",
 				Timestamp: "2023-10-15T14:40:00Z",
 			},
+			{
+				Type:      "eda",
+				Value:     4.2,
+				Unit:      "µS",
+				Timestamp: "2023-10-15T14:45:00Z",
+			},
+			{
+				Type:      "skin_temperature",
+				Value:     36.6,
+				Unit:      "°C",
+				Timestamp: "2023-10-15T14:45:00Z",
+			},
 		},
 	}
 	measurements, err := validateSync(req, "usr_patient")
 	if err != nil {
 		t.Fatalf("expected valid sync payload, got %v", err)
 	}
-	if len(measurements) != 3 || measurements[0].PatientID != "usr_patient" {
+	if len(measurements) != 5 || measurements[0].PatientID != "usr_patient" {
 		t.Fatalf("unexpected measurements: %#v", measurements)
 	}
+	if measurements[0].SignalQuality != 0.98 || measurements[0].SensorSource != "ppg" {
+		t.Fatalf("unexpected measurement metadata: %#v", measurements[0])
+	}
 
-	req.Data[0].Type = "temperature"
+	req.Data[0].Type = "unsupported_type"
 	if _, err := validateSync(req, "usr_patient"); err == nil {
 		t.Fatal("expected measurement type validation error")
 	}
@@ -114,6 +135,39 @@ func TestDeriveAlert(t *testing.T) {
 		t.Fatalf("unexpected alert: %#v", alert)
 	}
 
+	// Bradycardia test
+	bradyReq := syncRequest{
+		DeviceID: "dev_998877",
+		Data: []measurementInput{{
+			Type:      "heart_rate",
+			Value:     38,
+			Unit:      "bpm",
+			Timestamp: "2023-10-15T14:30:00Z",
+		}},
+	}
+	bradyMeas, _ := validateSync(bradyReq, "usr_patient")
+	bradyAlert, ok := deriveAlert(bradyMeas[0])
+	if !ok || bradyAlert.Type != "bradycardia" {
+		t.Fatalf("expected bradycardia alert, got %#v", bradyAlert)
+	}
+
+	// Fever test
+	feverReq := syncRequest{
+		DeviceID: "dev_998877",
+		Data: []measurementInput{{
+			Type:      "skin_temperature",
+			Value:     39.5,
+			Unit:      "°C",
+			Timestamp: "2023-10-15T14:30:00Z",
+		}},
+	}
+	feverMeas, _ := validateSync(feverReq, "usr_patient")
+	feverAlert, ok := deriveAlert(feverMeas[0])
+	if !ok || feverAlert.Type != "high_fever" {
+		t.Fatalf("expected high_fever alert, got %#v", feverAlert)
+	}
+
+	// Hypoxemia test
 	oxygenReq := syncRequest{
 		DeviceID: "dev_998877",
 		Data: []measurementInput{{
@@ -187,6 +241,31 @@ func TestSyncMeasurementsHandler(t *testing.T) {
 	}
 }
 
+func TestSyncCriticalMeasurementsHandler(t *testing.T) {
+	t.Parallel()
+	store := &fakeHealthStore{}
+	broadcaster := &fakeBroadcaster{}
+	handler := New(store, broadcaster)
+	req := httptest.NewRequest(http.MethodPost, "/v1/sync/critical", strings.NewReader(`{
+		"device_id":"dev_998877",
+		"data":[{"type":"heart_rate","value":160,"unit":"bpm","timestamp":"2023-10-15T14:30:00Z"}]
+	}`))
+	req = req.WithContext(authz.WithClaims(req.Context(), &security.Claims{UserID: "usr_patient", Role: models.RolePatient}))
+	res := httptest.NewRecorder()
+
+	handler.SyncCriticalMeasurements(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if len(store.measurements) != 1 {
+		t.Fatalf("expected one stored measurement, got %d", len(store.measurements))
+	}
+	if len(store.alerts) != 1 {
+		t.Fatalf("expected one generated alert, got %d", len(store.alerts))
+	}
+}
+
 func TestListMeasurementsHandler(t *testing.T) {
 	t.Parallel()
 	store := &fakeHealthStore{measurements: []models.Measurement{{ID: "meas_1", PatientID: "usr_patient", Type: "heart_rate", Unit: "bpm"}}}
@@ -210,7 +289,7 @@ func TestListMeasurementsRejectsBadFilters(t *testing.T) {
 	handler := New(&fakeHealthStore{}, nil)
 	cases := []string{
 		"/v1/patients/usr_patient/measurements?limit=0",
-		"/v1/patients/usr_patient/measurements?type=temperature",
+		"/v1/patients/usr_patient/measurements?type=invalid_type",
 		"/v1/patients/usr_patient/measurements?from=bad-time",
 		"/v1/patients/usr_patient/measurements?from=2023-10-16T00:00:00Z&to=2023-10-15T00:00:00Z",
 	}

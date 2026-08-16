@@ -16,6 +16,8 @@ import (
 type Store interface {
 	CreateNotification(ctx context.Context, notification models.Notification) error
 	ListNotifications(ctx context.Context, userID string) ([]models.Notification, error)
+	GetNotificationPreferences(ctx context.Context, userID string) (models.NotificationPreferences, error)
+	UpdateNotificationPreferences(ctx context.Context, userID string, prefs models.NotificationPreferences) error
 }
 
 type Handler struct {
@@ -72,6 +74,54 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "success", "data": notifications})
+}
+
+func (h Handler) GetPreferences(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	prefs, err := h.store.GetNotificationPreferences(r.Context(), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to load notification preferences")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status": "success",
+		"data":   prefs,
+	})
+}
+
+func (h Handler) UpdatePreferences(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req models.NotificationPreferences
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if req.AlertTypes == nil {
+		req.AlertTypes = map[string]bool{
+			"tachycardia":         true,
+			"hypoxemia":           true,
+			"sos":                 true,
+			"medication_reminder": true,
+			"device_status":       true,
+		}
+	}
+	if err := h.store.UpdateNotificationPreferences(r.Context(), claims.UserID, req); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to update notification preferences")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status":  "success",
+		"message": "notification preferences updated successfully",
+		"data":    req,
+	})
 }
 
 func allowed(value string, options ...string) bool {

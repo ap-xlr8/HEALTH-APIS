@@ -17,6 +17,7 @@ import (
 	"healthos/backend/internal/devices"
 	"healthos/backend/internal/health"
 	"healthos/backend/internal/identity"
+	"healthos/backend/internal/ml"
 	"healthos/backend/internal/models"
 	"healthos/backend/internal/notifications"
 	"healthos/backend/internal/patients"
@@ -50,6 +51,7 @@ type Server struct {
 	realtime      *realtime.Hub
 	subscriptions subscriptions.Handler
 	breakglass    breakglass.Handler
+	ml            ml.Handler
 	startTime     time.Time
 }
 
@@ -88,6 +90,7 @@ func New(cfg config.Config, logger *slog.Logger, mongoStore *store.Mongo) (*Serv
 		realtime:      hub,
 		subscriptions: subscriptions.New(mongoStore, cfg.StripeWebhookSecret),
 		breakglass:    breakglass.New(mongoStore),
+		ml:            ml.NewHandler(mongoStore),
 		startTime:     time.Now().UTC(),
 	}, nil
 }
@@ -131,6 +134,7 @@ func (s *Server) Routes() http.Handler {
 		fmt.Fprintf(w, "# HELP healthos_environment Current runtime environment.\n")
 		fmt.Fprintf(w, "# TYPE healthos_environment gauge\n")
 		fmt.Fprintf(w, "healthos_environment{env=%q} 1\n", s.cfg.Env)
+		globalMetrics.WritePrometheus(w)
 	})))
 	mux.Handle("GET /v1/openapi.yaml", s.internalToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "api/openapi/openapi.yaml")
@@ -189,6 +193,18 @@ func (s *Server) Routes() http.Handler {
 		},
 		http.HandlerFunc(s.health.SyncMeasurements),
 	)))
+	mux.Handle("POST /v1/sync/critical", protected(s.authz.Authorize(
+		"health_measurements",
+		models.ScopeWriteMeasurements,
+		[]string{models.RolePatient},
+		func(r *http.Request) string {
+			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
+				return claims.UserID
+			}
+			return ""
+		},
+		http.HandlerFunc(s.health.SyncCriticalMeasurements),
+	)))
 	mux.Handle("GET /v1/patients/{id}/measurements", protected(s.authz.Authorize(
 		"health_measurements",
 		models.ScopeReadMeasurements,
@@ -238,6 +254,27 @@ func (s *Server) Routes() http.Handler {
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.identity.Me),
 	)))
+	mux.Handle("GET /v1/profile/me/preferences", protected(s.authz.Authorize(
+		"profile",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.identity.GetPreferences),
+	)))
+	mux.Handle("PUT /v1/profile/me/preferences", protected(s.authz.Authorize(
+		"profile",
+		models.ScopeWritePatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.identity.UpdatePreferences),
+	)))
+	mux.Handle("PUT /v1/profile/caregiver", protected(s.authz.Authorize(
+		"profile",
+		models.ScopeWritePatient,
+		[]string{models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.identity.UpdateCaregiverProfile),
+	)))
 	mux.Handle("PUT /v1/patients/me/health-profile", protected(s.authz.Authorize(
 		"profile",
 		models.ScopeWritePatient,
@@ -256,6 +293,20 @@ func (s *Server) Routes() http.Handler {
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return r.PathValue("id") },
 		http.HandlerFunc(s.patients.GetPatient),
+	)))
+	mux.Handle("GET /v1/patients/{id}/risk-assessment", protected(s.authz.Authorize(
+		"risk_assessment",
+		models.ScopeReadMeasurements,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.ml.GetRiskAssessment),
+	)))
+	mux.Handle("GET /v1/patients/{id}/biometric-estimations", protected(s.authz.Authorize(
+		"biometric_estimations",
+		models.ScopeReadMeasurements,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.ml.GetBiometricEstimations),
 	)))
 	mux.Handle("POST /v1/patients/{id}/clinical-records", protected(s.authz.Authorize(
 		"clinical_records",
@@ -375,6 +426,13 @@ func (s *Server) Routes() http.Handler {
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.devices.ListDevices),
 	)))
+	mux.Handle("GET /v1/devices/{id}/sync-config", protected(s.authz.Authorize(
+		"devices",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.devices.GetSyncConfig),
+	)))
 	mux.Handle("POST /v1/devices/{id}/transfer-requests", protected(s.authz.Authorize(
 		"device_transfer_requests",
 		models.ScopeWriteDevices,
@@ -410,6 +468,20 @@ func (s *Server) Routes() http.Handler {
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.notifications.List),
 	)))
+	mux.Handle("GET /v1/notifications/preferences", protected(s.authz.Authorize(
+		"notifications",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.notifications.GetPreferences),
+	)))
+	mux.Handle("PUT /v1/notifications/preferences", protected(s.authz.Authorize(
+		"notifications",
+		models.ScopeWritePatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.notifications.UpdatePreferences),
+	)))
 	mux.Handle("POST /v1/support-tickets", protected(s.authz.Authorize(
 		"support_tickets",
 		models.ScopeWritePatient,
@@ -431,8 +503,9 @@ func (s *Server) Routes() http.Handler {
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.realtime.Serve),
 	)))
+	mux.Handle("POST /v1/ml/drift-webhook", s.internalToken(http.HandlerFunc(s.ml.DriftWebhook)))
 
-	return s.secureHeaders(LoggingMiddleware(s.logger)(mux))
+	return s.secureHeaders(LoggingMiddleware(s.logger)(MetricsMiddleware(mux)))
 }
 
 // internalToken protects operational/internal routes (/metrics and API specs).

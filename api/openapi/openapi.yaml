@@ -295,6 +295,34 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
+  /v1/sync/critical:
+    post:
+      tags: [SYNC]
+      summary: Ingesta prioritaria de telemetria critica
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncMeasurementsRequest'
+      responses:
+        '200':
+          description: Mediciones criticas procesadas inmediatamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  priority: { type: string }
+                  synced_count: { type: integer }
+                  alerts_triggered: { type: array, items: { type: string } }
+                  ml_risk: { type: object }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /v1/subscriptions/webhook:
     post:
       tags: [SUBSCRIPTIONS]
@@ -480,6 +508,76 @@ paths:
                   created_at: { type: string, format: date-time }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+  /v1/profile/me/preferences:
+    get:
+      tags: [PROFILE]
+      summary: Obtener preferencias del usuario autenticado
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Preferencias de usuario
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  data: { $ref: '#/components/schemas/UserPreferences' }
+        '401': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [PROFILE]
+      summary: Actualizar preferencias del usuario autenticado
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPreferences'
+      responses:
+        '200':
+          description: Preferencias actualizadas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/UserPreferences' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /v1/profile/caregiver:
+    put:
+      tags: [PROFILE]
+      summary: Actualizar perfil profesional del cuidador
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaregiverProfile'
+      responses:
+        '200':
+          description: Perfil de cuidador actualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/CaregiverProfile' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /v1/patients/{id}:
     get:
       tags: [PACIENTES]
@@ -504,6 +602,57 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PatientProfile'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/risk-assessment:
+    get:
+      tags: [ML]
+      summary: Evaluacion de riesgo y anomalias ML del paciente
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Evaluacion de riesgo calculada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  data: { $ref: '#/components/schemas/RiskResult' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/biometric-estimations:
+    get:
+      tags: [ML]
+      summary: Estimaciones biometricas avanzadas no invasivas
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Estimaciones biometricas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  data: { $ref: '#/components/schemas/BiometricEstimations' }
+        '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
@@ -868,6 +1017,31 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
+  /v1/devices/{id}/sync-config:
+    get:
+      tags: [DEVICES]
+      summary: Obtener configuracion de sincronizacion y muestreo del dispositivo
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Configuracion de sincronizacion
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  data: { $ref: '#/components/schemas/DeviceSyncConfig' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /v1/devices/{id}/transfer-requests:
     post:
       tags: [DEVICES]
@@ -980,6 +1154,49 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
+  /v1/notifications/preferences:
+    get:
+      tags: [NOTIFICATIONS]
+      summary: Obtener preferencias de notificaciones
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Preferencias de notificaciones
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  data: { $ref: '#/components/schemas/NotificationPreferences' }
+        '401': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [NOTIFICATIONS]
+      summary: Actualizar preferencias de notificaciones
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationPreferences'
+      responses:
+        '200':
+          description: Preferencias de notificaciones actualizadas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/NotificationPreferences' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
   /v1/support-tickets:
     get:
       tags: [SUPPORT]
@@ -1028,7 +1245,39 @@ paths:
         - cookieAuth: []
       responses:
         '101':
-          description: Switching Protocols
+          description: Switching Protocols - WebSocket conectado
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/ml/drift-webhook:
+    post:
+      tags: [ML]
+      summary: Webhook de monitoreo de drift para modelos ML
+      security:
+        - internalAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model_name]
+              properties:
+                model_name: { type: string }
+                metric: { type: string }
+                current_drift_score: { type: number }
+                threshold: { type: number }
+                action: { type: string }
+      responses:
+        '200':
+          description: Evento de drift procesado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  message: { type: string }
+                  data: { type: object }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
 components:
@@ -1525,3 +1774,76 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/SupportTicket' }
+    UserPreferences:
+      type: object
+      properties:
+        theme: { type: string, enum: [light, dark, system] }
+        language: { type: string, example: es }
+        notification_channels:
+          type: array
+          items: { type: string, enum: [push, email, sms] }
+        quiet_hours:
+          type: object
+          properties:
+            enabled: { type: boolean }
+            start: { type: string, example: "23:00" }
+            end: { type: string, example: "06:00" }
+    CaregiverProfile:
+      type: object
+      properties:
+        phone: { type: string }
+        specialty: { type: string }
+        organization: { type: string }
+        bio: { type: string }
+    DeviceSyncConfig:
+      type: object
+      properties:
+        device_id: { type: string }
+        sampling_interval_ms: { type: integer, example: 1000 }
+        batch_size: { type: integer, example: 50 }
+        vitals_enabled:
+          type: array
+          items: { type: string }
+        high_frequency_mode: { type: boolean }
+    NotificationPreferences:
+      type: object
+      properties:
+        channels:
+          type: object
+          properties:
+            push: { type: boolean }
+            email: { type: boolean }
+            sms: { type: boolean }
+        alert_types:
+          type: object
+          additionalProperties: { type: boolean }
+        quiet_hours:
+          type: object
+          properties:
+            enabled: { type: boolean }
+            start: { type: string }
+            end: { type: string }
+    RiskResult:
+      type: object
+      properties:
+        risk_score: { type: number, example: 15.5 }
+        risk_level: { type: string, enum: [LOW, MODERATE, HIGH, CRITICAL] }
+        is_anomaly_detected: { type: boolean }
+        anomaly_type: { type: string }
+        confidence: { type: number, example: 0.95 }
+        evaluated_at: { type: string, format: date-time }
+        factors:
+          type: array
+          items: { type: string }
+    BiometricEstimations:
+      type: object
+      properties:
+        patient_id: { type: string }
+        estimated_glucose: { type: number, example: 98.4 }
+        stress_index: { type: number, example: 32.0 }
+        vo2_max: { type: number, example: 42.5 }
+        recovery_score: { type: number, example: 85.0 }
+        confidence: { type: number, example: 0.92 }
+        clinical_disclaimer: { type: string }
+        evaluated_at: { type: string, format: date-time }
+

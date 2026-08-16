@@ -221,6 +221,31 @@ func (f *fakeIdentityStore) ResetUserPassword(ctx context.Context, token, passwo
 	return models.User{}, store.ErrNotFound
 }
 
+func (f *fakeIdentityStore) GetUserPreferences(ctx context.Context, userID string) (models.UserPreferences, error) {
+	if u, ok := f.usersByID[userID]; ok && u.Preferences != nil {
+		return *u.Preferences, nil
+	}
+	return models.UserPreferences{Theme: "system", Language: "es"}, nil
+}
+
+func (f *fakeIdentityStore) UpdateUserPreferences(ctx context.Context, userID string, prefs models.UserPreferences) error {
+	if u, ok := f.usersByID[userID]; ok {
+		u.Preferences = &prefs
+		f.usersByID[userID] = u
+		return nil
+	}
+	return store.ErrNotFound
+}
+
+func (f *fakeIdentityStore) UpdateCaregiverProfile(ctx context.Context, userID string, profile models.CaregiverProfile) error {
+	if u, ok := f.usersByID[userID]; ok {
+		u.CaregiverProfile = &profile
+		f.usersByID[userID] = u
+		return nil
+	}
+	return store.ErrNotFound
+}
+
 func TestValidateRegister(t *testing.T) {
 	t.Parallel()
 	valid := registerRequest{
@@ -1119,3 +1144,51 @@ func TestSensitiveEventsAreAudited(t *testing.T) {
 		}
 	}
 }
+
+func TestPreferencesHandler(t *testing.T) {
+	t.Parallel()
+	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	fakeStore := newFakeIdentityStore()
+	user := models.User{ID: "usr_pref", Email: "pref@example.com", Role: models.RolePatient}
+	fakeStore.usersByID[user.ID] = user
+	handler := New(fakeStore, privateKey, &privateKey.PublicKey, nil)
+
+	ctx := authz.WithClaims(context.Background(), &security.Claims{UserID: user.ID, Role: models.RolePatient})
+
+	// Get Preferences
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/profile/me/preferences", nil).WithContext(ctx)
+	getRes := httptest.NewRecorder()
+	handler.GetPreferences(getRes, getReq)
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("GetPreferences failed: %d", getRes.Code)
+	}
+
+	// Update Preferences
+	updateBody := `{"theme":"dark","language":"es","notification_channels":["push"],"quiet_hours":{"enabled":true,"start":"23:00","end":"06:00"}}`
+	putReq := httptest.NewRequest(http.MethodPut, "/v1/profile/me/preferences", strings.NewReader(updateBody)).WithContext(ctx)
+	putRes := httptest.NewRecorder()
+	handler.UpdatePreferences(putRes, putReq)
+	if putRes.Code != http.StatusOK {
+		t.Fatalf("UpdatePreferences failed: %d", putRes.Code)
+	}
+}
+
+func TestCaregiverProfileHandler(t *testing.T) {
+	t.Parallel()
+	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	fakeStore := newFakeIdentityStore()
+	user := models.User{ID: "cg_1", Email: "cg@example.com", Role: models.RoleCaregiver}
+	fakeStore.usersByID[user.ID] = user
+	handler := New(fakeStore, privateKey, &privateKey.PublicKey, nil)
+
+	ctx := authz.WithClaims(context.Background(), &security.Claims{UserID: user.ID, Role: models.RoleCaregiver})
+
+	body := `{"phone":"+525511223344","specialty":"Cardiologia Geriatrica","organization":"Clinica Santa Maria","bio":"Especialista con 15 anos de experiencia."}`
+	putReq := httptest.NewRequest(http.MethodPut, "/v1/profile/caregiver", strings.NewReader(body)).WithContext(ctx)
+	putRes := httptest.NewRecorder()
+	handler.UpdateCaregiverProfile(putRes, putReq)
+	if putRes.Code != http.StatusOK {
+		t.Fatalf("UpdateCaregiverProfile failed: %d", putRes.Code)
+	}
+}
+

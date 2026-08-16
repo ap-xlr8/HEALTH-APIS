@@ -482,10 +482,12 @@ func TestEnsureIndexesWithMockDeployment(t *testing.T) {
 			"support_tickets",
 			"relationships",
 			"break_glass_requests",
+			"device_sync_configs",
+			"ml_drift_events",
 		} {
 			responses = append(responses, emptyList(), mtest.CreateSuccessResponse())
 		}
-		for i := 0; i < 17; i++ {
+		for i := 0; i < 19; i++ {
 			responses = append(responses, mtest.CreateSuccessResponse(bson.E{Key: "numIndexesBefore", Value: 1}, bson.E{Key: "numIndexesAfter", Value: 2}))
 		}
 		mt.AddMockResponses(responses...)
@@ -522,3 +524,124 @@ func mustPanic(t *testing.T, fn func()) {
 	}()
 	fn()
 }
+
+func TestPreferencesAndNewStoreMethodsWithMockDeployment(t *testing.T) {
+	mt := mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock).CreateClient(true).CreateCollection(false))
+	ctx := context.Background()
+
+	mt.Run("GetUserPreferences default and found", func(mt *mtest.T) {
+		mongoStore := &Mongo{client: mt.Client, db: mt.Client.Database("healthos")}
+
+		// Mock 1: user with preferences
+		userDoc := bson.D{
+			{Key: "_id", Value: "usr_1"},
+			{Key: "preferences", Value: bson.D{
+				{Key: "theme", Value: "dark"},
+				{Key: "language", Value: "es"},
+			}},
+		}
+		mt.AddMockResponses(mtest.CreateCursorResponse(1, "healthos.users", mtest.FirstBatch, userDoc))
+
+		prefs, err := mongoStore.GetUserPreferences(ctx, "usr_1")
+		if err != nil {
+			t.Fatalf("GetUserPreferences failed: %v", err)
+		}
+		if prefs.Theme != "dark" {
+			t.Fatalf("expected dark theme, got %s", prefs.Theme)
+		}
+	})
+
+	mt.Run("UpdateUserPreferences and UpdateCaregiverProfile", func(mt *mtest.T) {
+		mongoStore := &Mongo{client: mt.Client, db: mt.Client.Database("healthos")}
+
+		mt.AddMockResponses(mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 1}, bson.E{Key: "nModified", Value: 1}))
+		err := mongoStore.UpdateUserPreferences(ctx, "usr_1", models.UserPreferences{Theme: "light", Language: "en"})
+		if err != nil {
+			t.Fatalf("UpdateUserPreferences failed: %v", err)
+		}
+
+		mt.AddMockResponses(mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 1}, bson.E{Key: "nModified", Value: 1}))
+		err = mongoStore.UpdateCaregiverProfile(ctx, "cg_1", models.CaregiverProfile{Phone: "12345", Specialty: "Geriatrics"})
+		if err != nil {
+			t.Fatalf("UpdateCaregiverProfile failed: %v", err)
+		}
+	})
+
+	mt.Run("DeviceSyncConfig Get and Update", func(mt *mtest.T) {
+		mongoStore := &Mongo{client: mt.Client, db: mt.Client.Database("healthos")}
+
+		configDoc := bson.D{
+			{Key: "_id", Value: "dev_100"},
+			{Key: "sampling_interval_ms", Value: int32(2000)},
+			{Key: "batch_size", Value: int32(25)},
+		}
+		mt.AddMockResponses(mtest.CreateCursorResponse(1, "healthos.device_sync_configs", mtest.FirstBatch, configDoc))
+
+		cfg, err := mongoStore.GetDeviceSyncConfig(ctx, "dev_100")
+		if err != nil {
+			t.Fatalf("GetDeviceSyncConfig failed: %v", err)
+		}
+		if cfg.SamplingIntervalMs != 2000 {
+			t.Fatalf("expected 2000ms, got %d", cfg.SamplingIntervalMs)
+		}
+
+		mt.AddMockResponses(mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 1}, bson.E{Key: "nModified", Value: 1}))
+		err = mongoStore.UpdateDeviceSyncConfig(ctx, models.DeviceSyncConfig{DeviceID: "dev_100", SamplingIntervalMs: 500})
+		if err != nil {
+			t.Fatalf("UpdateDeviceSyncConfig failed: %v", err)
+		}
+	})
+
+	mt.Run("MLDriftEvent Record and GetLatest", func(mt *mtest.T) {
+		mongoStore := &Mongo{client: mt.Client, db: mt.Client.Database("healthos")}
+
+		mt.AddMockResponses(mtest.CreateSuccessResponse())
+		err := mongoStore.RecordMLDriftEvent(ctx, models.MLDriftEvent{
+			ID:                "drf_1",
+			ModelName:         "risk_score",
+			Metric:            "psi",
+			CurrentDriftScore: 0.28,
+			Threshold:         0.25,
+			Status:            "model_paused",
+			TriggeredAt:       time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatalf("RecordMLDriftEvent failed: %v", err)
+		}
+
+		driftDoc := bson.D{
+			{Key: "_id", Value: "drf_1"},
+			{Key: "model_name", Value: "risk_score"},
+			{Key: "metric", Value: "psi"},
+			{Key: "current_drift_score", Value: 0.28},
+			{Key: "threshold", Value: 0.25},
+			{Key: "status", Value: "model_paused"},
+			{Key: "triggered_at", Value: time.Now().UTC()},
+		}
+		mt.AddMockResponses(mtest.CreateCursorResponse(1, "healthos.ml_drift_events", mtest.FirstBatch, driftDoc))
+		latest, err := mongoStore.GetLatestMLDriftEvent(ctx, "risk_score")
+		if err != nil {
+			t.Fatalf("GetLatestMLDriftEvent failed: %v", err)
+		}
+		if latest.Status != "model_paused" {
+			t.Fatalf("expected model_paused, got %s", latest.Status)
+		}
+	})
+
+	mt.Run("CalculateMedicationAdherence", func(mt *mtest.T) {
+		mongoStore := &Mongo{client: mt.Client, db: mt.Client.Database("healthos")}
+
+		count1 := mtest.CreateCursorResponse(1, "healthos.medication_logs", mtest.FirstBatch, bson.D{{Key: "n", Value: int32(10)}})
+		count2 := mtest.CreateCursorResponse(1, "healthos.medication_logs", mtest.FirstBatch, bson.D{{Key: "n", Value: int32(9)}})
+		mt.AddMockResponses(count1, count2)
+
+		adh, err := mongoStore.CalculateMedicationAdherence(ctx, "pat_1", "med_1")
+		if err != nil {
+			t.Fatalf("CalculateMedicationAdherence failed: %v", err)
+		}
+		if adh != 90.0 {
+			t.Fatalf("expected 90.0%% adherence, got %.2f", adh)
+		}
+	})
+}
+

@@ -100,6 +100,25 @@ func TestEvaluateMeasurements_BradycardiaAndHypoxemia(t *testing.T) {
 	}
 }
 
+func TestEvaluateMeasurements_TemperatureAndEDA(t *testing.T) {
+	engine := Default()
+	res, err := engine.EvaluateMeasurements([]models.Measurement{
+		{Type: "heart_rate", Value: 80.0},
+		{Type: "blood_oxygen", Value: 97.0},
+		{Type: "skin_temperature", Value: 39.5},
+		{Type: "eda", Value: 18.0},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsAnomalyDetected {
+		t.Fatalf("expected anomaly detected for high fever")
+	}
+	if res.AnomalyType != "high_fever" {
+		t.Fatalf("expected high_fever, got %q", res.AnomalyType)
+	}
+}
+
 func TestEvaluateMeasurements_CriticalTachycardia(t *testing.T) {
 	engine := Default()
 	res, err := engine.EvaluateMeasurements([]models.Measurement{
@@ -163,6 +182,53 @@ func TestEvaluateMeasurements_MildHypoxemia(t *testing.T) {
 	}
 	if res.RiskScore != 11.0 {
 		t.Fatalf("expected mild hypoxemia score 11, got %.2f", res.RiskScore)
+	}
+}
+
+func TestBiometricEstimations(t *testing.T) {
+	engine := Default()
+	profile := &models.HealthProfile{
+		WeightKg: 70.0,
+		HeightCm: 175,
+	}
+	measurements := []models.Measurement{
+		{Type: "heart_rate", Value: 70.0},
+		{Type: "eda", Value: 3.5},
+		{Type: "blood_oxygen", Value: 98.0},
+		{Type: "steps", Value: 6000.0},
+	}
+	estimations := engine.ComputeBiometricEstimations("pat_123", profile, measurements)
+	if estimations.EstimatedGlucose <= 0 {
+		t.Fatalf("expected positive estimated glucose, got %.2f", estimations.EstimatedGlucose)
+	}
+	if estimations.StressIndex < 0 || estimations.StressIndex > 100 {
+		t.Fatalf("expected stress index 0-100, got %.2f", estimations.StressIndex)
+	}
+	if estimations.VO2Max <= 0 {
+		t.Fatalf("expected positive vo2 max, got %.2f", estimations.VO2Max)
+	}
+	if estimations.RecoveryScore < 0 || estimations.RecoveryScore > 100 {
+		t.Fatalf("expected recovery score 0-100, got %.2f", estimations.RecoveryScore)
+	}
+	if estimations.ClinicalDisclaimer == "" {
+		t.Fatalf("expected non-empty clinical disclaimer")
+	}
+}
+
+func TestModelPauseAndResume(t *testing.T) {
+	engine := Default()
+	engine.SetModelPaused("risk_score", true)
+	if !engine.IsModelPaused("risk_score") {
+		t.Fatalf("expected model to be paused")
+	}
+	_, err := engine.EvaluateMeasurements([]models.Measurement{{Type: "heart_rate", Value: 70.0}})
+	if err == nil {
+		t.Fatalf("expected error when model is paused, got nil")
+	}
+	engine.SetModelPaused("risk_score", false)
+	_, err = engine.EvaluateMeasurements([]models.Measurement{{Type: "heart_rate", Value: 70.0}})
+	if err != nil {
+		t.Fatalf("expected success after resuming model, got error: %v", err)
 	}
 }
 

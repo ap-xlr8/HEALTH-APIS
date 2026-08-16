@@ -18,6 +18,8 @@ type Store interface {
 	FindDeviceTransferRequestByID(ctx context.Context, id string) (models.DeviceTransferRequest, error)
 	UpdateDeviceTransferRequestStatus(ctx context.Context, id, status string, updatedAt time.Time) (models.DeviceTransferRequest, error)
 	UpdateDeviceOwner(ctx context.Context, id, ownerID string, updatedAt time.Time) error
+	GetDeviceSyncConfig(ctx context.Context, deviceID string) (models.DeviceSyncConfig, error)
+	UpdateDeviceSyncConfig(ctx context.Context, config models.DeviceSyncConfig) error
 }
 
 type Service struct {
@@ -126,6 +128,14 @@ func (s Service) RejectTransfer(ctx context.Context, requestID, actorID string) 
 		return models.DeviceTransferRequest{}, errors.New("only transfer participants can reject a device transfer")
 	}
 	return s.store.UpdateDeviceTransferRequestStatus(ctx, request.ID, "rejected", time.Now().UTC())
+}
+
+func (s Service) GetSyncConfig(ctx context.Context, deviceID string) (models.DeviceSyncConfig, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" || len(deviceID) > 80 {
+		return models.DeviceSyncConfig{}, errors.New("device_id is required and must be <= 80 characters")
+	}
+	return s.store.GetDeviceSyncConfig(ctx, deviceID)
 }
 
 func (s Service) resolvePendingTransfer(ctx context.Context, requestID, actorID string) (models.DeviceTransferRequest, error) {

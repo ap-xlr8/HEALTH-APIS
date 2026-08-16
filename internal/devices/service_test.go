@@ -19,6 +19,7 @@ type fakeStore struct {
 	transfer    models.DeviceTransferRequest
 	found       models.DeviceTransferRequest
 	devices     []models.Device
+	syncConfig  models.DeviceSyncConfig
 	deviceErr   error
 	transferErr error
 	updateErr   error
@@ -78,6 +79,22 @@ func (f *fakeStore) UpdateDeviceOwner(ctx context.Context, id, ownerID string, u
 	f.device.ID = id
 	f.device.OwnerID = ownerID
 	f.device.UpdatedAt = updatedAt
+	return nil
+}
+
+func (f *fakeStore) GetDeviceSyncConfig(ctx context.Context, deviceID string) (models.DeviceSyncConfig, error) {
+	if f.syncConfig.DeviceID == "" {
+		return models.DeviceSyncConfig{
+			DeviceID:           deviceID,
+			SamplingIntervalMs: 1000,
+			BatchSize:          50,
+		}, nil
+	}
+	return f.syncConfig, nil
+}
+
+func (f *fakeStore) UpdateDeviceSyncConfig(ctx context.Context, config models.DeviceSyncConfig) error {
+	f.syncConfig = config
 	return nil
 }
 
@@ -246,6 +263,14 @@ func TestDeviceHandlers(t *testing.T) {
 	handler.RejectTransfer(rejectRes, rejectReq)
 	if rejectRes.Code != http.StatusOK || store.transfer.Status != "rejected" {
 		t.Fatalf("RejectTransfer status=%d transfer=%+v", rejectRes.Code, store.transfer)
+	}
+
+	configReq := httptest.NewRequest(http.MethodGet, "/v1/devices/dev_1/sync-config", nil).WithContext(ctx)
+	configReq.SetPathValue("id", "dev_1")
+	configRes := httptest.NewRecorder()
+	handler.GetSyncConfig(configRes, configReq)
+	if configRes.Code != http.StatusOK {
+		t.Fatalf("GetSyncConfig status=%d", configRes.Code)
 	}
 }
 

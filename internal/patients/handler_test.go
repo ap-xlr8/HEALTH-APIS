@@ -73,7 +73,17 @@ func TestGetPatientRejectsNonPatientAndMissing(t *testing.T) {
 func TestUpdateHealthProfile(t *testing.T) {
 	t.Parallel()
 	handler := New(fakePatientStore{user: models.User{ID: "usr_1", Role: models.RolePatient}})
-	req := httptest.NewRequest(http.MethodPut, "/v1/patients/me/health-profile", strings.NewReader(`{"weight_kg":72.5,"height_cm":175,"blood_type":"O+"}`))
+	req := httptest.NewRequest(http.MethodPut, "/v1/patients/me/health-profile", strings.NewReader(`{
+		"weight_kg":72.5,
+		"height_cm":175,
+		"blood_type":"O+",
+		"rh_factor":"+",
+		"birth_date":"1955-08-12",
+		"biological_sex":"male",
+		"phone":"+525512345678",
+		"emergency_contact":{"name":"Maria","phone":"+525587654321","relationship":"spouse"},
+		"baseline_vitals":{"resting_heart_rate":68.0,"baseline_spo2":98.0}
+	}`))
 	req = req.WithContext(authz.WithClaims(req.Context(), &security.Claims{UserID: "usr_1", Role: models.RolePatient}))
 	res := httptest.NewRecorder()
 
@@ -84,6 +94,9 @@ func TestUpdateHealthProfile(t *testing.T) {
 	}
 	if !strings.Contains(res.Body.String(), `"blood_type":"O+"`) {
 		t.Fatalf("expected normalized blood type in response, got %s", res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"biological_sex":"male"`) {
+		t.Fatalf("expected biological_sex in response, got %s", res.Body.String())
 	}
 }
 

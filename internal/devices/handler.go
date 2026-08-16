@@ -19,6 +19,8 @@ type HandlerStore interface {
 	UpdateDeviceTransferRequestStatus(ctx context.Context, id, status string, updatedAt time.Time) (models.DeviceTransferRequest, error)
 	UpdateDeviceOwner(ctx context.Context, id, ownerID string, updatedAt time.Time) error
 	ListDevices(ctx context.Context, ownerID string) ([]models.Device, error)
+	GetDeviceSyncConfig(ctx context.Context, deviceID string) (models.DeviceSyncConfig, error)
+	UpdateDeviceSyncConfig(ctx context.Context, config models.DeviceSyncConfig) error
 }
 
 type Handler struct {
@@ -92,4 +94,18 @@ func (h Handler) RejectTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "success", "data": request})
+}
+
+func (h Handler) GetSyncConfig(w http.ResponseWriter, r *http.Request) {
+	deviceID := strings.TrimSpace(r.PathValue("id"))
+	if deviceID == "" || len(deviceID) > 80 {
+		httpx.WriteError(w, http.StatusBadRequest, "device id is required")
+		return
+	}
+	config, err := New(h.store).GetSyncConfig(r.Context(), deviceID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not retrieve device sync config")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "success", "data": config})
 }

@@ -185,6 +185,12 @@ func (m *Mongo) EnsureIndexes(ctx context.Context) error {
 			{Keys: bson.D{{Key: "requester_id", Value: 1}, {Key: "status", Value: 1}}},
 			{Keys: bson.D{{Key: "expires_at", Value: 1}}},
 		},
+		"device_sync_configs": {
+			{Keys: bson.D{{Key: "_id", Value: 1}}},
+		},
+		"ml_drift_events": {
+			{Keys: bson.D{{Key: "model_name", Value: 1}, {Key: "triggered_at", Value: -1}}},
+		},
 	}
 
 	for collection, models := range indexes {
@@ -210,6 +216,7 @@ func (m *Mongo) createCollections(ctx context.Context) error {
 		"medications",
 		"medication_logs",
 		"devices",
+		"device_sync_configs",
 		"device_transfer_requests",
 		"consents",
 		"audit_logs",
@@ -219,6 +226,7 @@ func (m *Mongo) createCollections(ctx context.Context) error {
 		"support_tickets",
 		"relationships",
 		"break_glass_requests",
+		"ml_drift_events",
 	} {
 		if err := m.createCollectionIfMissing(ctx, name); err != nil {
 			return err
@@ -823,6 +831,150 @@ func (m *Mongo) UpdateUserHealthProfile(ctx context.Context, userID string, prof
 	}
 	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
 	return err
+}
+
+func (m *Mongo) GetUserPreferences(ctx context.Context, userID string) (models.UserPreferences, error) {
+	var user models.User
+	err := m.db.Collection("users").FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
+	if err != nil {
+		return models.UserPreferences{}, normalizeFindErr(err)
+	}
+	if user.Preferences == nil {
+		return models.UserPreferences{
+			Theme:                "system",
+			Language:             "es",
+			NotificationChannels: []string{"push", "email"},
+			QuietHours: models.QuietHours{
+				Enabled: false,
+				Start:   "22:00",
+				End:     "07:00",
+			},
+		}, nil
+	}
+	return *user.Preferences, nil
+}
+
+func (m *Mongo) UpdateUserPreferences(ctx context.Context, userID string, prefs models.UserPreferences) error {
+	update := bson.M{
+		"$set": bson.M{
+			"preferences": prefs,
+		},
+	}
+	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
+	return err
+}
+
+func (m *Mongo) GetNotificationPreferences(ctx context.Context, userID string) (models.NotificationPreferences, error) {
+	var user models.User
+	err := m.db.Collection("users").FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
+	if err != nil {
+		return models.NotificationPreferences{}, normalizeFindErr(err)
+	}
+	if user.NotificationPreferences == nil {
+		return models.NotificationPreferences{
+			Channels: models.NotificationChannelPreference{
+				Push:  true,
+				Email: true,
+				SMS:   false,
+			},
+			AlertTypes: map[string]bool{
+				"tachycardia":         true,
+				"hypoxemia":           true,
+				"sos":                 true,
+				"medication_reminder": true,
+				"device_status":       true,
+			},
+		}, nil
+	}
+	return *user.NotificationPreferences, nil
+}
+
+func (m *Mongo) UpdateNotificationPreferences(ctx context.Context, userID string, prefs models.NotificationPreferences) error {
+	update := bson.M{
+		"$set": bson.M{
+			"notification_preferences": prefs,
+		},
+	}
+	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
+	return err
+}
+
+func (m *Mongo) UpdateCaregiverProfile(ctx context.Context, userID string, profile models.CaregiverProfile) error {
+	update := bson.M{
+		"$set": bson.M{
+			"caregiver_profile": profile,
+		},
+	}
+	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
+	return err
+}
+
+func (m *Mongo) GetDeviceSyncConfig(ctx context.Context, deviceID string) (models.DeviceSyncConfig, error) {
+	var cfg models.DeviceSyncConfig
+	err := m.db.Collection("device_sync_configs").FindOne(ctx, bson.M{"_id": deviceID}).Decode(&cfg)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			// Default configuration
+			return models.DeviceSyncConfig{
+				DeviceID:           deviceID,
+				SamplingIntervalMs: 1000,
+				BatchSize:          50,
+				CriticalThresholds: map[string]float64{
+					"heart_rate_max": 140,
+					"heart_rate_min": 40,
+					"spo2_min":       90,
+				},
+				UpdatedAt: time.Now().UTC(),
+			}, nil
+		}
+		return models.DeviceSyncConfig{}, err
+	}
+	return cfg, nil
+}
+
+func (m *Mongo) UpdateDeviceSyncConfig(ctx context.Context, config models.DeviceSyncConfig) error {
+	opts := options.Update().SetUpsert(true)
+	config.UpdatedAt = time.Now().UTC()
+	_, err := m.db.Collection("device_sync_configs").UpdateOne(ctx, bson.M{"_id": config.DeviceID}, bson.M{"$set": config}, opts)
+	return err
+}
+
+func (m *Mongo) CalculateMedicationAdherence(ctx context.Context, patientID, medicationID string) (float64, error) {
+	filter := bson.M{"patient_id": patientID}
+	if medicationID != "" {
+		filter["medication_id"] = medicationID
+	}
+	totalLogs, err := m.db.Collection("medication_logs").CountDocuments(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+	if totalLogs == 0 {
+		return 100.0, nil
+	}
+
+	filter["status"] = "taken"
+	takenLogs, err := m.db.Collection("medication_logs").CountDocuments(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+
+	adherence := (float64(takenLogs) / float64(totalLogs)) * 100.0
+	return adherence, nil
+}
+
+func (m *Mongo) RecordMLDriftEvent(ctx context.Context, event models.MLDriftEvent) error {
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	_, err := m.db.Collection("ml_drift_events").InsertOne(ctx, event)
+	return err
+}
+
+func (m *Mongo) GetLatestMLDriftEvent(ctx context.Context, modelName string) (models.MLDriftEvent, error) {
+	var event models.MLDriftEvent
+	opts := options.FindOne().SetSort(bson.D{{Key: "triggered_at", Value: -1}})
+	err := m.db.Collection("ml_drift_events").FindOne(ctx, bson.M{"model_name": modelName}, opts).Decode(&event)
+	return event, normalizeFindErr(err)
 }
 
 func normalizeFindErr(err error) error {

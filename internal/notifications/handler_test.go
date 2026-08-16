@@ -16,6 +16,7 @@ import (
 type fakeStore struct {
 	notification  models.Notification
 	notifications []models.Notification
+	prefs         models.NotificationPreferences
 	err           error
 }
 
@@ -34,6 +35,21 @@ func (f *fakeStore) ListNotifications(ctx context.Context, userID string) ([]mod
 	return f.notifications, nil
 }
 
+func (f *fakeStore) GetNotificationPreferences(ctx context.Context, userID string) (models.NotificationPreferences, error) {
+	if f.err != nil {
+		return models.NotificationPreferences{}, f.err
+	}
+	return f.prefs, nil
+}
+
+func (f *fakeStore) UpdateNotificationPreferences(ctx context.Context, userID string, prefs models.NotificationPreferences) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.prefs = prefs
+	return nil
+}
+
 func TestNotificationHandlers(t *testing.T) {
 	store := &fakeStore{notifications: []models.Notification{{ID: "not_1"}}}
 	handler := New(store)
@@ -48,6 +64,40 @@ func TestNotificationHandlers(t *testing.T) {
 	handler.List(listRes, httptest.NewRequest(http.MethodGet, "/v1/notifications", nil).WithContext(ctx))
 	if listRes.Code != http.StatusOK {
 		t.Fatalf("List status=%d", listRes.Code)
+	}
+}
+
+func TestNotificationPreferencesHandlers(t *testing.T) {
+	store := &fakeStore{
+		prefs: models.NotificationPreferences{
+			Channels: models.NotificationChannelPreference{Push: true, Email: true, SMS: false},
+			AlertTypes: map[string]bool{
+				"tachycardia": true,
+				"hypoxemia":   true,
+			},
+		},
+	}
+	handler := New(store)
+	ctx := authz.WithClaims(context.Background(), &security.Claims{UserID: "usr_1", Role: models.RolePatient})
+
+	// Get
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/notifications/preferences", nil).WithContext(ctx)
+	getRes := httptest.NewRecorder()
+	handler.GetPreferences(getRes, getReq)
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("GetPreferences status=%d", getRes.Code)
+	}
+
+	// Update
+	body := `{"channels":{"push":true,"email":false,"sms":true},"alert_types":{"tachycardia":true,"hypoxemia":false}}`
+	putReq := httptest.NewRequest(http.MethodPut, "/v1/notifications/preferences", strings.NewReader(body)).WithContext(ctx)
+	putRes := httptest.NewRecorder()
+	handler.UpdatePreferences(putRes, putReq)
+	if putRes.Code != http.StatusOK {
+		t.Fatalf("UpdatePreferences status=%d", putRes.Code)
+	}
+	if !store.prefs.Channels.SMS || store.prefs.Channels.Email {
+		t.Fatalf("unexpected preferences state: %+v", store.prefs)
 	}
 }
 

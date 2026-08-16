@@ -19,32 +19,87 @@ const (
 	ScopeWritePatient      = "write:patient"
 )
 
+type EmergencyContact struct {
+	Name         string `bson:"name" json:"name"`
+	Phone        string `bson:"phone" json:"phone"`
+	Relationship string `bson:"relationship" json:"relationship"`
+}
+
+type BaselineVitals struct {
+	RestingHeartRate    float64 `bson:"resting_heart_rate,omitempty" json:"resting_heart_rate,omitempty"`
+	BaselineSpO2        float64 `bson:"baseline_spo2,omitempty" json:"baseline_spo2,omitempty"`
+	BaselineSystolicBP  float64 `bson:"baseline_systolic_bp,omitempty" json:"baseline_systolic_bp,omitempty"`
+	BaselineDiastolicBP float64 `bson:"baseline_diastolic_bp,omitempty" json:"baseline_diastolic_bp,omitempty"`
+}
+
 type HealthProfile struct {
-	WeightKg  float64 `bson:"weight_kg" json:"weight_kg"`
-	HeightCm  int     `bson:"height_cm" json:"height_cm"`
-	BloodType string  `bson:"blood_type" json:"blood_type"`
+	WeightKg         float64           `bson:"weight_kg" json:"weight_kg"`
+	HeightCm         int               `bson:"height_cm" json:"height_cm"`
+	BloodType        string            `bson:"blood_type" json:"blood_type"`
+	RhFactor         string            `bson:"rh_factor,omitempty" json:"rh_factor,omitempty"`
+	BirthDate        string            `bson:"birth_date,omitempty" json:"birth_date,omitempty"`
+	BiologicalSex    string            `bson:"biological_sex,omitempty" json:"biological_sex,omitempty"`
+	Phone            string            `bson:"phone,omitempty" json:"phone,omitempty"`
+	Address          string            `bson:"address,omitempty" json:"address,omitempty"`
+	EmergencyContact *EmergencyContact `bson:"emergency_contact,omitempty" json:"emergency_contact,omitempty"`
+	BaselineVitals   *BaselineVitals   `bson:"baseline_vitals,omitempty" json:"baseline_vitals,omitempty"`
+}
+
+type QuietHours struct {
+	Enabled bool   `bson:"enabled" json:"enabled"`
+	Start   string `bson:"start" json:"start"`
+	End     string `bson:"end" json:"end"`
+}
+
+type UserPreferences struct {
+	Theme                string     `bson:"theme" json:"theme"`
+	Language             string     `bson:"language" json:"language"`
+	NotificationChannels []string   `bson:"notification_channels" json:"notification_channels"`
+	QuietHours           QuietHours `bson:"quiet_hours" json:"quiet_hours"`
+}
+
+type NotificationChannelPreference struct {
+	Push  bool `bson:"push" json:"push"`
+	Email bool `bson:"email" json:"email"`
+	SMS   bool `bson:"sms" json:"sms"`
+}
+
+type NotificationPreferences struct {
+	Channels   NotificationChannelPreference `bson:"channels" json:"channels"`
+	AlertTypes map[string]bool               `bson:"alert_types" json:"alert_types"`
+}
+
+type CaregiverProfile struct {
+	Phone            string            `bson:"phone,omitempty" json:"phone,omitempty"`
+	Specialty        string            `bson:"specialty,omitempty" json:"specialty,omitempty"`
+	Organization     string            `bson:"organization,omitempty" json:"organization,omitempty"`
+	Bio              string            `bson:"bio,omitempty" json:"bio,omitempty"`
+	EmergencyContact *EmergencyContact `bson:"emergency_contact,omitempty" json:"emergency_contact,omitempty"`
 }
 
 type User struct {
-	ID                     string         `bson:"_id" json:"id"`
-	Email                  string         `bson:"email" json:"email"`
-	PasswordHash           string         `bson:"password_hash" json:"-"`
-	Role                   string         `bson:"role" json:"role"`
-	FirstName              string         `bson:"first_name" json:"first_name"`
-	LastName               string         `bson:"last_name" json:"last_name"`
-	Age                    int            `bson:"age,omitempty" json:"age,omitempty"`
-	HealthProfile          *HealthProfile `bson:"health_profile,omitempty" json:"health_profile,omitempty"`
-	ActiveConditions       []string       `bson:"active_conditions,omitempty" json:"active_conditions,omitempty"`
-	EmailVerified          bool           `bson:"email_verified" json:"email_verified"`
-	VerificationToken      string         `bson:"verification_token,omitempty" json:"-"`
-	VerificationExpiresAt  *time.Time     `bson:"verification_expires_at,omitempty" json:"-"`
-	TwoFactorCode          string         `bson:"two_factor_code,omitempty" json:"-"`
-	TwoFactorExpiresAt     *time.Time     `bson:"two_factor_expires_at,omitempty" json:"-"`
-	FailedLoginAttempts    int            `bson:"failed_login_attempts,omitempty" json:"-"`
-	LockoutUntil           *time.Time     `bson:"lockout_until,omitempty" json:"-"`
-	PasswordResetToken     string         `bson:"password_reset_token,omitempty" json:"-"`
-	PasswordResetExpiresAt *time.Time     `bson:"password_reset_expires_at,omitempty" json:"-"`
-	CreatedAt              time.Time      `bson:"created_at" json:"created_at"`
+	ID                      string                   `bson:"_id" json:"id"`
+	Email                   string                   `bson:"email" json:"email"`
+	PasswordHash            string                   `bson:"password_hash" json:"-"`
+	Role                    string                   `bson:"role" json:"role"`
+	FirstName               string                   `bson:"first_name" json:"first_name"`
+	LastName                string                   `bson:"last_name" json:"last_name"`
+	Age                     int                      `bson:"age,omitempty" json:"age,omitempty"`
+	HealthProfile           *HealthProfile           `bson:"health_profile,omitempty" json:"health_profile,omitempty"`
+	CaregiverProfile        *CaregiverProfile        `bson:"caregiver_profile,omitempty" json:"caregiver_profile,omitempty"`
+	Preferences             *UserPreferences         `bson:"preferences,omitempty" json:"preferences,omitempty"`
+	NotificationPreferences *NotificationPreferences `bson:"notification_preferences,omitempty" json:"notification_preferences,omitempty"`
+	ActiveConditions        []string                 `bson:"active_conditions,omitempty" json:"active_conditions,omitempty"`
+	EmailVerified           bool                     `bson:"email_verified" json:"email_verified"`
+	VerificationToken       string                   `bson:"verification_token,omitempty" json:"-"`
+	VerificationExpiresAt   *time.Time               `bson:"verification_expires_at,omitempty" json:"-"`
+	TwoFactorCode           string                   `bson:"two_factor_code,omitempty" json:"-"`
+	TwoFactorExpiresAt      *time.Time               `bson:"two_factor_expires_at,omitempty" json:"-"`
+	FailedLoginAttempts     int                      `bson:"failed_login_attempts,omitempty" json:"-"`
+	LockoutUntil            *time.Time               `bson:"lockout_until,omitempty" json:"-"`
+	PasswordResetToken      string                   `bson:"password_reset_token,omitempty" json:"-"`
+	PasswordResetExpiresAt  *time.Time               `bson:"password_reset_expires_at,omitempty" json:"-"`
+	CreatedAt               time.Time                `bson:"created_at" json:"created_at"`
 }
 
 type Session struct {
@@ -56,14 +111,18 @@ type Session struct {
 }
 
 type Measurement struct {
-	ID        string    `bson:"_id" json:"id"`
-	PatientID string    `bson:"patient_id" json:"patient_id"`
-	DeviceID  string    `bson:"device_id" json:"device_id"`
-	Type      string    `bson:"type" json:"type"`
-	Value     float64   `bson:"value" json:"value"`
-	Unit      string    `bson:"unit" json:"unit"`
-	Timestamp time.Time `bson:"timestamp" json:"timestamp"`
-	CreatedAt time.Time `bson:"created_at" json:"created_at"`
+	ID            string    `bson:"_id" json:"id"`
+	PatientID     string    `bson:"patient_id" json:"patient_id"`
+	DeviceID      string    `bson:"device_id" json:"device_id"`
+	Type          string    `bson:"type" json:"type"`
+	Value         float64   `bson:"value" json:"value"`
+	Unit          string    `bson:"unit" json:"unit"`
+	SignalQuality float64   `bson:"signal_quality,omitempty" json:"signal_quality,omitempty"`
+	ClockDriftMs  int64     `bson:"clock_drift_ms,omitempty" json:"clock_drift_ms,omitempty"`
+	SensorSource  string    `bson:"sensor_source,omitempty" json:"sensor_source,omitempty"`
+	SessionID     string    `bson:"session_id,omitempty" json:"session_id,omitempty"`
+	Timestamp     time.Time `bson:"timestamp" json:"timestamp"`
+	CreatedAt     time.Time `bson:"created_at" json:"created_at"`
 }
 
 type MeasurementFilter struct {
@@ -137,26 +196,75 @@ type BreakGlassRequest struct {
 	ApprovedAt  time.Time `bson:"approved_at,omitempty" json:"approved_at,omitempty"`
 }
 
+type Allergy struct {
+	Allergen               string   `bson:"allergen" json:"allergen"`
+	Type                   string   `bson:"type" json:"type"`
+	Severity               string   `bson:"severity" json:"severity"`
+	ClinicalManifestations []string `bson:"clinical_manifestations" json:"clinical_manifestations"`
+	ReportedDate           string   `bson:"reported_date,omitempty" json:"reported_date,omitempty"`
+}
+
+type PathologicalCondition struct {
+	Condition        string   `bson:"condition" json:"condition"`
+	ICD10Code        string   `bson:"icd10_code,omitempty" json:"icd10_code,omitempty"`
+	OnsetDate        string   `bson:"onset_date,omitempty" json:"onset_date,omitempty"`
+	Status           string   `bson:"status,omitempty" json:"status,omitempty"`
+	Surgeries        []string `bson:"surgeries,omitempty" json:"surgeries,omitempty"`
+	Hospitalizations []string `bson:"hospitalizations,omitempty" json:"hospitalizations,omitempty"`
+	Implants         []string `bson:"implants,omitempty" json:"implants,omitempty"`
+	Transfusions     []string `bson:"transfusions,omitempty" json:"transfusions,omitempty"`
+}
+
+type GynecologicalHistory struct {
+	MenarcheAge         int    `bson:"menarche_age,omitempty" json:"menarche_age,omitempty"`
+	LastMenstrualPeriod string `bson:"last_menstrual_period,omitempty" json:"last_menstrual_period,omitempty"`
+	FormulaGPCA         string `bson:"formula_gpca,omitempty" json:"formula_gpca,omitempty"`
+	Contraceptives      string `bson:"contraceptives,omitempty" json:"contraceptives,omitempty"`
+	GestationalStatus   string `bson:"gestational_status,omitempty" json:"gestational_status,omitempty"`
+}
+
+type FamilyHistoryItem struct {
+	Condition    string `bson:"condition" json:"condition"`
+	Relationship string `bson:"relationship" json:"relationship"`
+	AgeOnset     int    `bson:"age_onset,omitempty" json:"age_onset,omitempty"`
+}
+
+type Lifestyle struct {
+	SmokingStatus         string  `bson:"smoking_status,omitempty" json:"smoking_status,omitempty"`
+	AlcoholFrequency      string  `bson:"alcohol_frequency,omitempty" json:"alcohol_frequency,omitempty"`
+	PhysicalActivityLevel string  `bson:"physical_activity_level,omitempty" json:"physical_activity_level,omitempty"`
+	SleepQualityScore     float64 `bson:"sleep_quality_score,omitempty" json:"sleep_quality_score,omitempty"`
+}
+
 type ClinicalRecord struct {
-	ID         string    `bson:"_id" json:"id"`
-	PatientID  string    `bson:"patient_id" json:"patient_id"`
-	Conditions []string  `bson:"conditions" json:"conditions"`
-	Allergies  []string  `bson:"allergies" json:"allergies"`
-	Notes      string    `bson:"notes,omitempty" json:"notes,omitempty"`
-	RecordedBy string    `bson:"recorded_by" json:"recorded_by"`
-	RecordedAt time.Time `bson:"recorded_at" json:"recorded_at"`
-	CreatedAt  time.Time `bson:"created_at" json:"created_at"`
+	ID                   string                  `bson:"_id" json:"id"`
+	PatientID            string                  `bson:"patient_id" json:"patient_id"`
+	Conditions           []string                `bson:"conditions" json:"conditions"`
+	Allergies            []string                `bson:"allergies" json:"allergies"`
+	StructuredAllergies  []Allergy               `bson:"structured_allergies,omitempty" json:"structured_allergies,omitempty"`
+	PathologyDetails     []PathologicalCondition `bson:"pathology_details,omitempty" json:"pathology_details,omitempty"`
+	GynecologicalHistory *GynecologicalHistory   `bson:"gynecological_history,omitempty" json:"gynecological_history,omitempty"`
+	FamilyHistory        []FamilyHistoryItem     `bson:"family_history,omitempty" json:"family_history,omitempty"`
+	Lifestyle            *Lifestyle              `bson:"lifestyle,omitempty" json:"lifestyle,omitempty"`
+	Notes                string                  `bson:"notes,omitempty" json:"notes,omitempty"`
+	RecordedBy           string                  `bson:"recorded_by" json:"recorded_by"`
+	RecordedAt           time.Time               `bson:"recorded_at" json:"recorded_at"`
+	CreatedAt            time.Time               `bson:"created_at" json:"created_at"`
 }
 
 type Medication struct {
-	ID        string    `bson:"_id" json:"id"`
-	PatientID string    `bson:"patient_id" json:"patient_id"`
-	Name      string    `bson:"name" json:"name"`
-	Dosage    string    `bson:"dosage" json:"dosage"`
-	Schedule  string    `bson:"schedule" json:"schedule"`
-	Active    bool      `bson:"active" json:"active"`
-	CreatedAt time.Time `bson:"created_at" json:"created_at"`
-	UpdatedAt time.Time `bson:"updated_at" json:"updated_at"`
+	ID                     string    `bson:"_id" json:"id"`
+	PatientID              string    `bson:"patient_id" json:"patient_id"`
+	Name                   string    `bson:"name" json:"name"`
+	Dosage                 string    `bson:"dosage" json:"dosage"`
+	Schedule               string    `bson:"schedule" json:"schedule"`
+	Route                  string    `bson:"route,omitempty" json:"route,omitempty"`
+	FrequencyDetails       string    `bson:"frequency_details,omitempty" json:"frequency_details,omitempty"`
+	ComplementaryTherapies []string  `bson:"complementary_therapies,omitempty" json:"complementary_therapies,omitempty"`
+	CalculatedAdherence    float64   `bson:"calculated_adherence,omitempty" json:"calculated_adherence,omitempty"`
+	Active                 bool      `bson:"active" json:"active"`
+	CreatedAt              time.Time `bson:"created_at" json:"created_at"`
+	UpdatedAt              time.Time `bson:"updated_at" json:"updated_at"`
 }
 
 type MedicationLog struct {
@@ -176,6 +284,14 @@ type Device struct {
 	Status       string    `bson:"status" json:"status"`
 	CreatedAt    time.Time `bson:"created_at" json:"created_at"`
 	UpdatedAt    time.Time `bson:"updated_at" json:"updated_at"`
+}
+
+type DeviceSyncConfig struct {
+	DeviceID           string             `bson:"_id" json:"device_id"`
+	SamplingIntervalMs int                `bson:"sampling_interval_ms" json:"sampling_interval_ms"`
+	BatchSize          int                `bson:"batch_size" json:"batch_size"`
+	CriticalThresholds map[string]float64 `bson:"critical_thresholds" json:"critical_thresholds"`
+	UpdatedAt          time.Time          `bson:"updated_at" json:"updated_at"`
 }
 
 type DeviceTransferRequest struct {
@@ -215,4 +331,26 @@ type SupportTicket struct {
 	Body      string    `bson:"body" json:"body"`
 	CreatedAt time.Time `bson:"created_at" json:"created_at"`
 	UpdatedAt time.Time `bson:"updated_at" json:"updated_at"`
+}
+
+type MLDriftEvent struct {
+	ID                string    `bson:"_id" json:"id"`
+	ModelName         string    `bson:"model_name" json:"model_name"`
+	Metric            string    `bson:"metric" json:"metric"`
+	CurrentDriftScore float64   `bson:"current_drift_score" json:"current_drift_score"`
+	Threshold         float64   `bson:"threshold" json:"threshold"`
+	Status            string    `bson:"status" json:"status"`
+	TriggeredAt       time.Time `bson:"triggered_at" json:"triggered_at"`
+	CreatedAt         time.Time `bson:"created_at" json:"created_at"`
+}
+
+type BiometricEstimations struct {
+	PatientID          string    `json:"patient_id"`
+	EstimatedGlucose   float64   `json:"estimated_glucose_mg_dl"`
+	StressIndex        float64   `json:"stress_index"`
+	VO2Max             float64   `json:"vo2_max_ml_kg_min"`
+	RecoveryScore      float64   `json:"recovery_score"`
+	Confidence         float64   `json:"confidence"`
+	ClinicalDisclaimer string    `json:"clinical_disclaimer"`
+	EvaluatedAt        time.Time `json:"evaluated_at"`
 }

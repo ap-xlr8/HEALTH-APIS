@@ -17,6 +17,7 @@ type Store interface {
 	CreateMedication(ctx context.Context, medication models.Medication) error
 	ListMedications(ctx context.Context, patientID string) ([]models.Medication, error)
 	RecordMedicationLog(ctx context.Context, log models.MedicationLog) error
+	CalculateMedicationAdherence(ctx context.Context, patientID, medicationID string) (float64, error)
 }
 
 type Handler struct {
@@ -27,18 +28,26 @@ func New(store Store) Handler {
 	return Handler{store: store}
 }
 
+type clinicalRecordRequest struct {
+	Conditions           []string                       `json:"conditions,omitempty"`
+	Allergies            []string                       `json:"allergies,omitempty"`
+	StructuredAllergies  []models.Allergy               `json:"structured_allergies,omitempty"`
+	PathologyDetails     []models.PathologicalCondition `json:"pathology_details,omitempty"`
+	GynecologicalHistory *models.GynecologicalHistory   `json:"gynecological_history,omitempty"`
+	FamilyHistory        []models.FamilyHistoryItem     `json:"family_history,omitempty"`
+	Lifestyle            *models.Lifestyle              `json:"lifestyle,omitempty"`
+	Notes                string                         `json:"notes,omitempty"`
+	RecordedAt           string                         `json:"recorded_at,omitempty"`
+}
+
 func (h Handler) CreateClinicalRecord(w http.ResponseWriter, r *http.Request) {
 	patientID := r.PathValue("id")
-	var req struct {
-		Conditions []string `json:"conditions"`
-		Allergies  []string `json:"allergies"`
-		Notes      string   `json:"notes"`
-		RecordedAt string   `json:"recorded_at"`
-	}
+	var req clinicalRecordRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
+
 	conditions, ok := cleanList(req.Conditions, 50, 80)
 	if !ok {
 		httpx.WriteError(w, http.StatusBadRequest, "conditions contains invalid values")
@@ -49,6 +58,25 @@ func (h Handler) CreateClinicalRecord(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "allergies contains invalid values")
 		return
 	}
+
+	// Also extract conditions from pathology details if not explicitly passed
+	if len(conditions) == 0 && len(req.PathologyDetails) > 0 {
+		for _, pd := range req.PathologyDetails {
+			if cond := strings.TrimSpace(pd.Condition); cond != "" {
+				conditions = append(conditions, cond)
+			}
+		}
+	}
+
+	// Also extract allergen names from structured allergies if not explicitly passed
+	if len(allergies) == 0 && len(req.StructuredAllergies) > 0 {
+		for _, sa := range req.StructuredAllergies {
+			if allergen := strings.TrimSpace(sa.Allergen); allergen != "" {
+				allergies = append(allergies, allergen)
+			}
+		}
+	}
+
 	notes := strings.TrimSpace(req.Notes)
 	if len(notes) > 2000 {
 		httpx.WriteError(w, http.StatusBadRequest, "notes must be <= 2000 characters")
@@ -70,15 +98,21 @@ func (h Handler) CreateClinicalRecord(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "secure id generation failed")
 		return
 	}
+
 	record := models.ClinicalRecord{
-		ID:         "clin_" + id,
-		PatientID:  patientID,
-		Conditions: conditions,
-		Allergies:  allergies,
-		Notes:      notes,
-		RecordedBy: claims.UserID,
-		RecordedAt: recordedAt,
-		CreatedAt:  now,
+		ID:                   "clin_" + id,
+		PatientID:            patientID,
+		Conditions:           conditions,
+		Allergies:            allergies,
+		StructuredAllergies:  req.StructuredAllergies,
+		PathologyDetails:     req.PathologyDetails,
+		GynecologicalHistory: req.GynecologicalHistory,
+		FamilyHistory:        req.FamilyHistory,
+		Lifestyle:            req.Lifestyle,
+		Notes:                notes,
+		RecordedBy:           claims.UserID,
+		RecordedAt:           recordedAt,
+		CreatedAt:            now,
 	}
 	if err := h.store.CreateClinicalRecord(r.Context(), record); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not create clinical record")
@@ -99,10 +133,13 @@ func (h Handler) ListClinicalRecords(w http.ResponseWriter, r *http.Request) {
 func (h Handler) CreateMedication(w http.ResponseWriter, r *http.Request) {
 	patientID := r.PathValue("id")
 	var req struct {
-		Name     string `json:"name"`
-		Dosage   string `json:"dosage"`
-		Schedule string `json:"schedule"`
-		Active   *bool  `json:"active"`
+		Name                   string   `json:"name"`
+		Dosage                 string   `json:"dosage"`
+		Schedule               string   `json:"schedule"`
+		Route                  string   `json:"route,omitempty"`
+		FrequencyDetails       string   `json:"frequency_details,omitempty"`
+		ComplementaryTherapies []string `json:"complementary_therapies,omitempty"`
+		Active                 *bool    `json:"active"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
@@ -124,14 +161,18 @@ func (h Handler) CreateMedication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	medication := models.Medication{
-		ID:        "med_" + id,
-		PatientID: patientID,
-		Name:      name,
-		Dosage:    dosage,
-		Schedule:  schedule,
-		Active:    active,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:                     "med_" + id,
+		PatientID:              patientID,
+		Name:                   name,
+		Dosage:                 dosage,
+		Schedule:               schedule,
+		Route:                  strings.TrimSpace(req.Route),
+		FrequencyDetails:       strings.TrimSpace(req.FrequencyDetails),
+		ComplementaryTherapies: req.ComplementaryTherapies,
+		Active:                 active,
+		CalculatedAdherence:    100.0,
+		CreatedAt:              now,
+		UpdatedAt:              now,
 	}
 	if err := h.store.CreateMedication(r.Context(), medication); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not create medication")
@@ -141,10 +182,17 @@ func (h Handler) CreateMedication(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) ListMedications(w http.ResponseWriter, r *http.Request) {
-	medications, err := h.store.ListMedications(r.Context(), r.PathValue("id"))
+	patientID := r.PathValue("id")
+	medications, err := h.store.ListMedications(r.Context(), patientID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not list medications")
 		return
+	}
+	// Calculate dynamic adherence for each medication
+	for i := range medications {
+		if adherence, err := h.store.CalculateMedicationAdherence(r.Context(), patientID, medications[i].ID); err == nil {
+			medications[i].CalculatedAdherence = adherence
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "success", "data": medications})
 }

@@ -26,9 +26,16 @@ func New(store Store) Handler {
 }
 
 type healthProfileRequest struct {
-	WeightKg  float64 `json:"weight_kg"`
-	HeightCm  int     `json:"height_cm"`
-	BloodType string  `json:"blood_type"`
+	WeightKg         float64                  `json:"weight_kg"`
+	HeightCm         int                      `json:"height_cm"`
+	BloodType        string                   `json:"blood_type"`
+	RhFactor         string                   `json:"rh_factor,omitempty"`
+	BirthDate        string                   `json:"birth_date,omitempty"`
+	BiologicalSex    string                   `json:"biological_sex,omitempty"`
+	Phone            string                   `json:"phone,omitempty"`
+	Address          string                   `json:"address,omitempty"`
+	EmergencyContact *models.EmergencyContact `json:"emergency_contact,omitempty"`
+	BaselineVitals   *models.BaselineVitals   `json:"baseline_vitals,omitempty"`
 }
 
 var validBloodTypes = map[string]bool{
@@ -93,10 +100,18 @@ func (h Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	profile := models.HealthProfile{
-		WeightKg:  req.WeightKg,
-		HeightCm:  req.HeightCm,
-		BloodType: bloodType,
+		WeightKg:         req.WeightKg,
+		HeightCm:         req.HeightCm,
+		BloodType:        bloodType,
+		RhFactor:         strings.TrimSpace(req.RhFactor),
+		BirthDate:        strings.TrimSpace(req.BirthDate),
+		BiologicalSex:    strings.ToLower(strings.TrimSpace(req.BiologicalSex)),
+		Phone:            strings.TrimSpace(req.Phone),
+		Address:          strings.TrimSpace(req.Address),
+		EmergencyContact: req.EmergencyContact,
+		BaselineVitals:   req.BaselineVitals,
 	}
+
 	if err := h.store.UpdateUserHealthProfile(r.Context(), claims.UserID, profile); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, "patient not found")
@@ -108,10 +123,6 @@ func (h Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"status": "success",
-		"data": map[string]any{
-			"weight_kg":  profile.WeightKg,
-			"height_cm":  profile.HeightCm,
-			"blood_type": profile.BloodType,
-		},
+		"data":   profile,
 	})
 }

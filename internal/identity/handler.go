@@ -46,6 +46,9 @@ type Store interface {
 	DeleteSessionByID(ctx context.Context, id string) error
 	DeleteSessionsByUserID(ctx context.Context, userID string) error
 	WriteAudit(ctx context.Context, log models.AuditLog) error
+	GetUserPreferences(ctx context.Context, userID string) (models.UserPreferences, error)
+	UpdateUserPreferences(ctx context.Context, userID string, prefs models.UserPreferences) error
+	UpdateCaregiverProfile(ctx context.Context, userID string, profile models.CaregiverProfile) error
 }
 
 type Handler struct {
@@ -793,6 +796,85 @@ func (h Handler) Me(w http.ResponseWriter, r *http.Request) {
 		"last_name":  user.LastName,
 		"role":       user.Role,
 		"created_at": user.CreatedAt,
+	})
+}
+
+func (h Handler) GetPreferences(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	prefs, err := h.store.GetUserPreferences(r.Context(), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to load preferences")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status": "success",
+		"data":   prefs,
+	})
+}
+
+func (h Handler) UpdatePreferences(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req models.UserPreferences
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if req.Theme == "" {
+		req.Theme = "system"
+	}
+	if req.Language == "" {
+		req.Language = "es"
+	}
+	if err := h.store.UpdateUserPreferences(r.Context(), claims.UserID, req); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to update preferences")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status":  "success",
+		"message": "preferences updated successfully",
+		"data":    req,
+	})
+}
+
+func (h Handler) UpdateCaregiverProfile(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if claims.Role != models.RoleCaregiver && claims.Role != models.RoleAdmin {
+		httpx.WriteError(w, http.StatusForbidden, "only caregivers or admins can update caregiver profile")
+		return
+	}
+	var req models.CaregiverProfile
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	req.Phone = strings.TrimSpace(req.Phone)
+	req.Specialty = strings.TrimSpace(req.Specialty)
+	req.Organization = strings.TrimSpace(req.Organization)
+	req.Bio = strings.TrimSpace(req.Bio)
+	if len(req.Bio) > 1000 {
+		httpx.WriteError(w, http.StatusBadRequest, "bio must be <= 1000 characters")
+		return
+	}
+	if err := h.store.UpdateCaregiverProfile(r.Context(), claims.UserID, req); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to update caregiver profile")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status":  "success",
+		"message": "caregiver profile updated successfully",
+		"data":    req,
 	})
 }
 

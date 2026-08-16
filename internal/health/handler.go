@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,10 +42,14 @@ type syncRequest struct {
 }
 
 type measurementInput struct {
-	Type      string  `json:"type"`
-	Value     float64 `json:"value"`
-	Unit      string  `json:"unit"`
-	Timestamp string  `json:"timestamp"`
+	Type          string   `json:"type"`
+	Value         float64  `json:"value"`
+	Unit          string   `json:"unit"`
+	Timestamp     string   `json:"timestamp"`
+	SignalQuality *float64 `json:"signal_quality,omitempty"`
+	ClockDriftMs  *int64   `json:"clock_drift_ms,omitempty"`
+	SensorSource  string   `json:"sensor_source,omitempty"`
+	SessionID     string   `json:"session_id,omitempty"`
 }
 
 func (h Handler) SyncMeasurements(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +76,73 @@ func (h Handler) SyncMeasurements(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "measurement sync failed")
 		return
 	}
+	alertsTriggered := h.processAlertsAndBroadcasts(r.Context(), measurements)
+
+	// ML Risk and Anomaly Evaluation
+	var mlRiskResult *ml.RiskResult
+	if evaluatedRisk, err := ml.Default().EvaluateMeasurements(measurements); err == nil {
+		mlRiskResult = &evaluatedRisk
+	}
+
+	responsePayload := map[string]any{
+		"status":           "success",
+		"synced_count":     len(measurements),
+		"alerts_triggered": alertsTriggered,
+	}
+	if mlRiskResult != nil {
+		responsePayload["ml_risk"] = mlRiskResult
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, responsePayload)
+}
+
+// SyncCriticalMeasurements processes critical/urgent telemetry instantly bypassing batch delays.
+func (h Handler) SyncCriticalMeasurements(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "missing authenticated principal")
+		return
+	}
+	if claims.Role != models.RolePatient {
+		httpx.WriteError(w, http.StatusForbidden, "only patient mobile clients can sync critical measurements")
+		return
+	}
+	var req syncRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	measurements, err := validateSync(req, claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.store.InsertMeasurements(r.Context(), measurements); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "critical measurement sync failed")
+		return
+	}
+	alertsTriggered := h.processAlertsAndBroadcasts(r.Context(), measurements)
+
+	// Instant high-priority evaluation
+	var mlRiskResult *ml.RiskResult
+	if evaluatedRisk, err := ml.Default().EvaluateMeasurements(measurements); err == nil {
+		mlRiskResult = &evaluatedRisk
+	}
+
+	responsePayload := map[string]any{
+		"status":           "success",
+		"priority":         "critical",
+		"synced_count":     len(measurements),
+		"alerts_triggered": alertsTriggered,
+	}
+	if mlRiskResult != nil {
+		responsePayload["ml_risk"] = mlRiskResult
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, responsePayload)
+}
+
+func (h Handler) processAlertsAndBroadcasts(ctx context.Context, measurements []models.Measurement) []string {
 	alertsTriggered := make([]string, 0)
 	for _, measurement := range measurements {
 		h.broadcast(map[string]any{
@@ -83,8 +155,8 @@ func (h Handler) SyncMeasurements(w http.ResponseWriter, r *http.Request) {
 			"eventId":    "evt_" + uuid.NewString(),
 		})
 		if alert, ok := deriveAlert(measurement); ok {
-			if err := h.store.CreateAlert(r.Context(), alert); err == nil {
-				h.createAlertNotification(r.Context(), alert, measurement)
+			if err := h.store.CreateAlert(ctx, alert); err == nil {
+				h.createAlertNotification(ctx, alert, measurement)
 				alertsTriggered = append(alertsTriggered, alert.ID)
 				h.broadcast(map[string]any{
 					"type":        "alert.created",
@@ -105,22 +177,7 @@ func (h Handler) SyncMeasurements(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// 3. ML Risk and Anomaly Evaluation
-	var mlRiskResult *ml.RiskResult
-	if evaluatedRisk, err := ml.Default().EvaluateMeasurements(measurements); err == nil {
-		mlRiskResult = &evaluatedRisk
-	}
-
-	responsePayload := map[string]any{
-		"status":           "success",
-		"synced_count":     len(measurements),
-		"alerts_triggered": alertsTriggered,
-	}
-	if mlRiskResult != nil {
-		responsePayload["ml_risk"] = mlRiskResult
-	}
-
-	httpx.WriteJSON(w, http.StatusOK, responsePayload)
+	return alertsTriggered
 }
 
 func (h Handler) createAlertNotification(ctx context.Context, alert models.Alert, measurement models.Measurement) {
@@ -168,20 +225,33 @@ func validateSync(req syncRequest, patientID string) ([]models.Measurement, erro
 	if len(req.Data) == 0 || len(req.Data) > 1000 {
 		return nil, errors.New("data must include between 1 and 1000 measurements")
 	}
-	expectedUnits := map[string]string{
-		"heart_rate":   "bpm",
-		"blood_oxygen": "%",
-		"steps":        "count",
+
+	validMetricUnits := map[string][]string{
+		"heart_rate":       {"bpm"},
+		"blood_oxygen":     {"%"},
+		"steps":            {"count"},
+		"eda":              {"µS", "uS", "us"},
+		"skin_temperature": {"°C", "C", "celsius"},
+		"ptt":              {"ms"},
+		"ecg":              {"mV", "mv", "raw"},
 	}
+
 	measurements := make([]models.Measurement, 0, len(req.Data))
 	now := time.Now().UTC()
 	for _, input := range req.Data {
-		expectedUnit, ok := expectedUnits[input.Type]
+		allowedUnits, ok := validMetricUnits[input.Type]
 		if !ok {
-			return nil, errors.New("measurement type must be heart_rate, blood_oxygen, or steps")
+			return nil, errors.New("measurement type must be heart_rate, blood_oxygen, steps, eda, skin_temperature, ptt, or ecg")
 		}
-		if input.Unit != expectedUnit {
-			return nil, errors.New("unit must match measurement type: heart_rate=bpm, blood_oxygen=%, steps=count")
+		matchedUnit := false
+		for _, u := range allowedUnits {
+			if strings.EqualFold(input.Unit, u) || input.Unit == u {
+				matchedUnit = true
+				break
+			}
+		}
+		if !matchedUnit {
+			return nil, errors.New("invalid unit for measurement type " + input.Type)
 		}
 		ts, err := time.Parse(time.RFC3339, input.Timestamp)
 		if err != nil {
@@ -193,16 +263,27 @@ func validateSync(req syncRequest, patientID string) ([]models.Measurement, erro
 		if input.Value < 0 {
 			return nil, errors.New("value must be non-negative")
 		}
-		measurements = append(measurements, models.Measurement{
-			ID:        "meas_" + uuid.NewString(),
-			PatientID: patientID,
-			DeviceID:  req.DeviceID,
-			Type:      input.Type,
-			Value:     input.Value,
-			Unit:      input.Unit,
-			Timestamp: ts.UTC(),
-			CreatedAt: now,
-		})
+
+		m := models.Measurement{
+			ID:           "meas_" + uuid.NewString(),
+			PatientID:    patientID,
+			DeviceID:     req.DeviceID,
+			Type:         input.Type,
+			Value:        input.Value,
+			Unit:         input.Unit,
+			Timestamp:    ts.UTC(),
+			CreatedAt:    now,
+			SensorSource: strings.TrimSpace(input.SensorSource),
+			SessionID:    strings.TrimSpace(input.SessionID),
+		}
+		if input.SignalQuality != nil {
+			m.SignalQuality = *input.SignalQuality
+		}
+		if input.ClockDriftMs != nil {
+			m.ClockDriftMs = *input.ClockDriftMs
+		}
+
+		measurements = append(measurements, m)
 	}
 	return measurements, nil
 }
@@ -223,10 +304,10 @@ func measurementFilterFromRequest(r *http.Request) (models.MeasurementFilter, er
 	}
 	if metricType := query.Get("type"); metricType != "" {
 		switch metricType {
-		case "heart_rate", "blood_oxygen", "steps":
+		case "heart_rate", "blood_oxygen", "steps", "eda", "skin_temperature", "ptt", "ecg":
 			filter.Type = metricType
 		default:
-			return models.MeasurementFilter{}, errors.New("type must be heart_rate, blood_oxygen, or steps")
+			return models.MeasurementFilter{}, errors.New("type must be heart_rate, blood_oxygen, steps, eda, skin_temperature, ptt, or ecg")
 		}
 	}
 	if rawFrom := query.Get("from"); rawFrom != "" {
@@ -262,6 +343,18 @@ func deriveAlert(measurement models.Measurement) (models.Alert, bool) {
 			CreatedAt:      time.Now().UTC(),
 		}, true
 	}
+	if measurement.Type == "heart_rate" && measurement.Value <= 40 && measurement.Value > 0 {
+		return models.Alert{
+			ID:             "alrt_" + uuid.NewString(),
+			PatientID:      measurement.PatientID,
+			Type:           "bradycardia",
+			Severity:       "critical",
+			Message:        "Frecuencia cardiaca anormalmente baja detectada (<= 40 bpm)",
+			MeasurementRef: measurement.ID,
+			Acknowledged:   false,
+			CreatedAt:      time.Now().UTC(),
+		}, true
+	}
 	if measurement.Type == "blood_oxygen" && measurement.Value < 90 {
 		return models.Alert{
 			ID:             "alrt_" + uuid.NewString(),
@@ -269,6 +362,30 @@ func deriveAlert(measurement models.Measurement) (models.Alert, bool) {
 			Type:           "hypoxemia",
 			Severity:       "critical",
 			Message:        "Oxigenacion sanguinea anormalmente baja detectada",
+			MeasurementRef: measurement.ID,
+			Acknowledged:   false,
+			CreatedAt:      time.Now().UTC(),
+		}, true
+	}
+	if measurement.Type == "skin_temperature" && measurement.Value > 39.0 {
+		return models.Alert{
+			ID:             "alrt_" + uuid.NewString(),
+			PatientID:      measurement.PatientID,
+			Type:           "high_fever",
+			Severity:       "critical",
+			Message:        "Temperatura cutanea anormalmente alta detectada (> 39.0 C)",
+			MeasurementRef: measurement.ID,
+			Acknowledged:   false,
+			CreatedAt:      time.Now().UTC(),
+		}, true
+	}
+	if measurement.Type == "skin_temperature" && measurement.Value < 35.0 && measurement.Value > 0 {
+		return models.Alert{
+			ID:             "alrt_" + uuid.NewString(),
+			PatientID:      measurement.PatientID,
+			Type:           "hypothermia",
+			Severity:       "critical",
+			Message:        "Temperatura cutanea anormalmente baja detectada (< 35.0 C)",
 			MeasurementRef: measurement.ID,
 			Acknowledged:   false,
 			CreatedAt:      time.Now().UTC(),
