@@ -313,10 +313,12 @@ func (h Handler) verify2FA(w http.ResponseWriter, r *http.Request, web bool) {
 			Expires:  now.Add(15 * time.Minute),
 		})
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"status":       "success",
-			"csrf_token":   csrf,
-			"access_token": access,
-			"message":      "2FA authentication successful",
+			"status":        "success",
+			"csrf_token":    csrf,
+			"access_token":  access,
+			"refresh_token": refresh,
+			"expires_in":    900,
+			"message":       "2FA authentication successful",
 		})
 		return
 	}
