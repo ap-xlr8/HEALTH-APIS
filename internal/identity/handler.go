@@ -411,6 +411,36 @@ func (h Handler) LogoutMobile(w http.ResponseWriter, r *http.Request) {
 }
 
 
+func (h Handler) Me(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	user, err := h.store.FindUserByID(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to get user profile")
+		return
+	}
+	name := strings.TrimSpace(user.FirstName + " " + user.LastName)
+	if name == "" {
+		name = user.Email
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"id":         user.ID,
+		"email":      user.Email,
+		"name":       name,
+		"first_name": user.FirstName,
+		"last_name":  user.LastName,
+		"role":       user.Role,
+		"created_at": user.CreatedAt,
+	})
+}
+
 func generate6DigitOTP() string {
 	n, err := rand.Int(rand.Reader, big.NewInt(900000))
 	if err != nil {
@@ -437,3 +467,4 @@ func validateRegister(req registerRequest) error {
 	}
 	return nil
 }
+

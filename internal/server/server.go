@@ -201,6 +201,13 @@ func (s *Server) Routes() http.Handler {
 		http.HandlerFunc(s.alerts.Acknowledge),
 	)))
 
+	mux.Handle("GET /v1/profile/me", protected(s.authz.Authorize(
+		"profile",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.identity.Me),
+	)))
 	mux.Handle("GET /v1/patients/{id}", protected(s.authz.Authorize(
 		"patients",
 		models.ScopeReadPatient,

@@ -300,6 +300,30 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+  /v1/profile/me:
+    get:
+      tags: [AUTH]
+      summary: Obtener perfil del usuario autenticado actual
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Perfil del usuario autenticado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  email: { type: string }
+                  name: { type: string }
+                  first_name: { type: string }
+                  last_name: { type: string }
+                  role: { type: string, enum: [patient, caregiver, admin] }
+                  created_at: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /v1/patients/{id}:
     get:
       tags: [PACIENTES]
