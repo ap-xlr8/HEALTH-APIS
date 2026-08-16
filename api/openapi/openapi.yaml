@@ -3,7 +3,7 @@ info:
   title: Health OS Backend API
   version: 1.0.0
 servers:
-  - url: https://staging.api.healthos.app
+  - url: https://health-apis.onrender.com
   - url: http://localhost:8080
 paths:
   /v1/auth/register:
@@ -171,6 +171,55 @@ paths:
                   expires_in: { type: integer, example: 600 }
         '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+  /v1/auth/forgot-password:
+    post:
+      tags: [AUTH]
+      summary: Solicitar enlace de restablecimiento de contraseña
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: Enlace enviado (no revela si el correo existe)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  message: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+  /v1/auth/reset-password:
+    post:
+      tags: [AUTH]
+      summary: Restablecer contraseña con token de un solo uso
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token: { type: string, example: a1b2c3... }
+                new_password: { type: string, minLength: 9, maxLength: 128 }
+      responses:
+        '200':
+          description: Contraseña actualizada y sesiones revocadas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  message: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
   /v1/auth/refresh:
     post:
       tags: [AUTH]
@@ -321,10 +370,42 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+  /v1/alerts/sos:
+    post:
+      tags: [ALERTAS]
+      summary: Disparar alerta SOS de emergencia médica con ubicación GPS
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                location:
+                  type: object
+                  properties:
+                    lat: { type: number, format: double, example: 19.4326 }
+                    lng: { type: number, format: double, example: -99.1332 }
+                trigger:
+                  type: string
+                  example: MANUAL_BUTTON
+      responses:
+        '201':
+          description: Alerta SOS registrada y emitida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /v1/alerts/{id}:
     get:
       tags: [ALERTAS]
-      summary: Detalle de alerta
+      summary: Obtener detalle de una alerta médica
       security:
         - bearerAuth: []
         - cookieAuth: []
@@ -426,6 +507,44 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+  /v1/patients/me/health-profile:
+    put:
+      tags: [PACIENTES]
+      summary: Actualizar perfil de salud del paciente autenticado
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [weight_kg, height_cm, blood_type]
+              properties:
+                weight_kg: { type: number, minimum: 20, maximum: 300, example: 72.5 }
+                height_cm: { type: integer, minimum: 50, maximum: 250, example: 175 }
+                blood_type:
+                  type: string
+                  enum: [A+, A-, B+, B-, AB+, AB-, O+, O-]
+                  example: O+
+      responses:
+        '200':
+          description: Perfil de salud actualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  data:
+                    type: object
+                    properties:
+                      weight_kg: { type: number }
+                      height_cm: { type: integer }
+                      blood_type: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /v1/patients/{id}/measurements:
     get:
       tags: [SYNC]

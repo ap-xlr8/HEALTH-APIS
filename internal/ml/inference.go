@@ -3,8 +3,6 @@ package ml
 import (
 	"errors"
 	"math"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -13,40 +11,28 @@ import (
 
 // RiskResult represents the evaluation output from ML inference.
 type RiskResult struct {
-	RiskScore         float64   `json:"risk_score"`         // 0.0 - 100.0
-	RiskLevel         string    `json:"risk_level"`         // LOW, MODERATE, HIGH, CRITICAL
+	RiskScore         float64   `json:"risk_score"` // 0.0 - 100.0
+	RiskLevel         string    `json:"risk_level"` // LOW, MODERATE, HIGH, CRITICAL
 	IsAnomalyDetected bool      `json:"is_anomaly_detected"`
 	AnomalyType       string    `json:"anomaly_type,omitempty"`
 	Confidence        float64   `json:"confidence"`
 	EvaluatedAt       time.Time `json:"evaluated_at"`
 }
 
-// InferenceEngine manages onnx model artifacts and realtime scoring.
-type InferenceEngine struct {
-	mu         sync.RWMutex
-	modelsDir  string
-	loaded     bool
-	riskModel  string
-	vitalsModel string
-}
+// InferenceEngine performs realtime risk and anomaly scoring using
+// deterministic clinical heuristics. It does not ship, download, or depend on
+// any model artifact binaries (previous .onnx stubs were removed).
+type InferenceEngine struct{}
 
 var (
 	defaultEngine *InferenceEngine
 	once          sync.Once
 )
 
-// NewEngine creates or returns the singleton ML inference engine.
+// NewEngine creates an ML inference engine. The parameter is kept for
+// backward compatibility and has no effect.
 func NewEngine(modelsDir string) *InferenceEngine {
-	if modelsDir == "" {
-		modelsDir = filepath.Join("internal", "ml", "models")
-	}
-	e := &InferenceEngine{
-		modelsDir:   modelsDir,
-		riskModel:   filepath.Join(modelsDir, "risk_scoring.onnx"),
-		vitalsModel: filepath.Join(modelsDir, "combined_vitals.onnx"),
-	}
-	e.init()
-	return e
+	return &InferenceEngine{}
 }
 
 // Default returns the default global inference engine.
@@ -57,17 +43,7 @@ func Default() *InferenceEngine {
 	return defaultEngine
 }
 
-func (e *InferenceEngine) init() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	
-	// Verify models presence
-	if _, err := os.Stat(e.riskModel); err == nil {
-		e.loaded = true
-	}
-}
-
-// EvaluateMeasurements performs real-time multivariate risk & anomaly scoring.
+// EvaluateMeasurements performs realtime multivariate risk & anomaly scoring.
 func (e *InferenceEngine) EvaluateMeasurements(measurements []models.Measurement) (RiskResult, error) {
 	if len(measurements) == 0 {
 		return RiskResult{}, errors.New("no measurements provided for ML evaluation")
@@ -96,11 +72,11 @@ func (e *InferenceEngine) EvaluateMeasurements(measurements []models.Measurement
 
 	if hasHR {
 		if latestHR > 140 {
-			riskScore += (latestHR - 140) * 1.5 + 45.0
+			riskScore += (latestHR-140)*1.5 + 45.0
 			isAnomaly = true
 			anomalyType = "tachycardia"
 		} else if latestHR < 40 && latestHR > 0 {
-			riskScore += (40 - latestHR) * 1.8 + 40.0
+			riskScore += (40-latestHR)*1.8 + 40.0
 			isAnomaly = true
 			anomalyType = "bradycardia"
 		} else if latestHR > 100 {
@@ -110,7 +86,7 @@ func (e *InferenceEngine) EvaluateMeasurements(measurements []models.Measurement
 
 	if hasSpO2 {
 		if latestSpO2 < 90 {
-			riskScore += (90 - latestSpO2) * 3.5 + 50.0
+			riskScore += (90-latestSpO2)*3.5 + 50.0
 			isAnomaly = true
 			if anomalyType != "" {
 				anomalyType += "+hypoxemia"

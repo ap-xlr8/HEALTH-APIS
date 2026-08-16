@@ -25,6 +25,58 @@ func TestNormalizeFindErr(t *testing.T) {
 	}
 }
 
+func TestConnectWithRetry(t *testing.T) {
+	t.Parallel()
+
+	t.Run("retries then succeeds with growing backoff", func(t *testing.T) {
+		t.Parallel()
+		var attempts int
+		err := connectWithRetry(context.Background(), 2*time.Second, time.Millisecond, 10*time.Millisecond, func(ctx context.Context) error {
+			attempts++
+			if attempts < 3 {
+				return errors.New("boom")
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("expected success, got %v", err)
+		}
+		if attempts != 3 {
+			t.Fatalf("expected 3 attempts, got %d", attempts)
+		}
+	})
+
+	t.Run("caps backoff at max", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+		defer cancel()
+		err := connectWithRetry(ctx, time.Hour, time.Millisecond, time.Millisecond, func(ctx context.Context) error {
+			return errors.New("boom")
+		})
+		if err == nil {
+			t.Fatal("expected error after deadline")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected deadline error, got %v", err)
+		}
+	})
+
+	t.Run("succeeds immediately", func(t *testing.T) {
+		t.Parallel()
+		var attempts int
+		err := connectWithRetry(context.Background(), time.Second, time.Millisecond, time.Millisecond, func(ctx context.Context) error {
+			attempts++
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("expected success, got %v", err)
+		}
+		if attempts != 1 {
+			t.Fatalf("expected 1 attempt, got %d", attempts)
+		}
+	})
+}
+
 func TestInsertMeasurementsEmpty(t *testing.T) {
 	t.Parallel()
 	var m Mongo
@@ -316,6 +368,89 @@ func TestMongoMethodsWithMockDeployment(t *testing.T) {
 		}
 		if tickets, err := mongoStore.ListSupportTickets(ctx, "usr_1"); err != nil || len(tickets) != 1 || tickets[0].ID != "sup_1" {
 			t.Fatalf("ListSupportTickets tickets=%#v err=%v", tickets, err)
+		}
+	})
+}
+
+func TestMongoAuthFlowMethodsWithMockDeployment(t *testing.T) {
+	mt := mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock).CreateClient(true).CreateCollection(false))
+	ctx := context.Background()
+	now := time.Now().UTC()
+	mt.Run("auth flows", func(mt *mtest.T) {
+		mongoStore := &Mongo{client: mt.Client, db: mt.Client.Database("healthos")}
+		userDoc := bson.D{
+			{Key: "_id", Value: "usr_1"},
+			{Key: "email", Value: "u@example.com"},
+			{Key: "verification_token", Value: "vtok"},
+			{Key: "email_verified", Value: true},
+			{Key: "two_factor_code", Value: "123456"},
+			{Key: "failed_login_attempts", Value: 2},
+			{Key: "password_reset_token", Value: "prtok"},
+		}
+		deviceDoc := bson.D{
+			{Key: "_id", Value: "dev_1"},
+			{Key: "owner_id", Value: "usr_1"},
+			{Key: "type", Value: "wearable"},
+			{Key: "status", Value: "active"},
+		}
+		mt.AddMockResponses(
+			mtest.CreateCursorResponse(0, "healthos.users", mtest.FirstBatch, userDoc),
+			mtest.CreateSuccessResponse(bson.E{Key: "value", Value: userDoc}),
+			mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 1}),
+			mtest.CreateSuccessResponse(bson.E{Key: "value", Value: userDoc}),
+			mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 1}),
+			mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 1}),
+			mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 1}),
+			mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 1}),
+			mtest.CreateCursorResponse(0, "healthos.users", mtest.FirstBatch, userDoc),
+			mtest.CreateSuccessResponse(bson.E{Key: "value", Value: userDoc}),
+			mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 1}),
+			mtest.CreateCursorResponse(0, "healthos.devices", mtest.FirstBatch, deviceDoc),
+			mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 2}),
+			mtest.CreateSuccessResponse(),
+		)
+
+		if user, err := mongoStore.FindUserByVerificationToken(ctx, "vtok"); err != nil || user.ID != "usr_1" {
+			t.Fatalf("FindUserByVerificationToken user=%#v err=%v", user, err)
+		}
+		if user, err := mongoStore.VerifyUserEmail(ctx, "vtok"); err != nil || user.ID != "usr_1" {
+			t.Fatalf("VerifyUserEmail user=%#v err=%v", user, err)
+		}
+		if err := mongoStore.SetUserTwoFactorCode(ctx, "usr_1", "654321", now.Add(time.Minute)); err != nil {
+			t.Fatalf("SetUserTwoFactorCode returned error: %v", err)
+		}
+		if user, err := mongoStore.VerifyUserTwoFactorCode(ctx, "u@example.com", "654321"); err != nil || user.ID != "usr_1" {
+			t.Fatalf("VerifyUserTwoFactorCode user=%#v err=%v", user, err)
+		}
+		if err := mongoStore.ClearUserTwoFactorCode(ctx, "usr_1"); err != nil {
+			t.Fatalf("ClearUserTwoFactorCode returned error: %v", err)
+		}
+		if err := mongoStore.UpdateUserFailedLogins(ctx, "usr_1", 3, nil); err != nil {
+			t.Fatalf("UpdateUserFailedLogins returned error: %v", err)
+		}
+		if err := mongoStore.ResetUserFailedLogins(ctx, "usr_1"); err != nil {
+			t.Fatalf("ResetUserFailedLogins returned error: %v", err)
+		}
+		if err := mongoStore.SetUserPasswordResetToken(ctx, "usr_1", "prtok", now.Add(30*time.Minute)); err != nil {
+			t.Fatalf("SetUserPasswordResetToken returned error: %v", err)
+		}
+		if user, err := mongoStore.FindUserByPasswordResetToken(ctx, "prtok"); err != nil || user.ID != "usr_1" {
+			t.Fatalf("FindUserByPasswordResetToken user=%#v err=%v", user, err)
+		}
+		if user, err := mongoStore.ResetUserPassword(ctx, "prtok", "hash"); err != nil || user.ID != "usr_1" {
+			t.Fatalf("ResetUserPassword user=%#v err=%v", user, err)
+		}
+		if err := mongoStore.UpdateUserHealthProfile(ctx, "usr_1", models.HealthProfile{BloodType: "O+"}); err != nil {
+			t.Fatalf("UpdateUserHealthProfile returned error: %v", err)
+		}
+		if device, err := mongoStore.FindDeviceByID(ctx, "dev_1"); err != nil || device.OwnerID != "usr_1" {
+			t.Fatalf("FindDeviceByID device=%#v err=%v", device, err)
+		}
+		if err := mongoStore.DeleteSessionsByUserID(ctx, "usr_1"); err != nil {
+			t.Fatalf("DeleteSessionsByUserID returned error: %v", err)
+		}
+		if err := mongoStore.Ping(ctx); err != nil {
+			t.Fatalf("Ping returned error: %v", err)
 		}
 	})
 }

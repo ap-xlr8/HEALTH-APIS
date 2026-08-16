@@ -20,6 +20,15 @@ type contextKey string
 
 const claimsKey contextKey = "claims"
 
+func isStateChangingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
 type Store interface {
 	FindUserByID(ctx context.Context, id string) (models.User, error)
 	HasActiveRelationship(ctx context.Context, caregiverID, patientID string) (bool, error)
@@ -74,9 +83,15 @@ func (m Middleware) RequireAuth(next http.Handler) http.Handler {
 		}
 		if fromCookie {
 			csrfCookie, err := r.Cookie("csrf_token")
-			if err != nil || csrfCookie.Value == "" || csrfCookie.Value != r.Header.Get("X-CSRF-Token") {
-				httpx.WriteError(w, http.StatusForbidden, "invalid csrf token")
-				return
+			if err == nil && csrfCookie.Value != "" {
+				// Expose the current CSRF token so the SPA can re-acquire it after a reload
+				w.Header().Set("X-CSRF-Token", csrfCookie.Value)
+			}
+			if isStateChangingMethod(r.Method) {
+				if err != nil || csrfCookie.Value == "" || csrfCookie.Value != r.Header.Get("X-CSRF-Token") {
+					httpx.WriteError(w, http.StatusForbidden, "invalid csrf token")
+					return
+				}
 			}
 		}
 		next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), claims)))

@@ -4,10 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"healthos/backend/internal/authz"
 	"healthos/backend/internal/models"
 	"healthos/backend/internal/store"
+	"healthos/backend/pkg/security"
 )
 
 type fakePatientStore struct {
@@ -19,6 +22,13 @@ func (f fakePatientStore) FindUserByID(ctx context.Context, id string) (models.U
 		return f.user, nil
 	}
 	return models.User{}, store.ErrNotFound
+}
+
+func (f fakePatientStore) UpdateUserHealthProfile(ctx context.Context, userID string, profile models.HealthProfile) error {
+	if f.user.ID == userID {
+		return nil
+	}
+	return store.ErrNotFound
 }
 
 func TestGetPatient(t *testing.T) {
@@ -54,8 +64,60 @@ func TestGetPatientRejectsNonPatientAndMissing(t *testing.T) {
 			res := httptest.NewRecorder()
 			handler.GetPatient(res, req)
 			if res.Code != tc.code {
-				t.Fatalf("expected %d, got %d", tc.code, res.Code)
+				t.Fatalf("expected %d, got %d", res.Code, tc.code)
 			}
 		})
+	}
+}
+
+func TestUpdateHealthProfile(t *testing.T) {
+	t.Parallel()
+	handler := New(fakePatientStore{user: models.User{ID: "usr_1", Role: models.RolePatient}})
+	req := httptest.NewRequest(http.MethodPut, "/v1/patients/me/health-profile", strings.NewReader(`{"weight_kg":72.5,"height_cm":175,"blood_type":"O+"}`))
+	req = req.WithContext(authz.WithClaims(req.Context(), &security.Claims{UserID: "usr_1", Role: models.RolePatient}))
+	res := httptest.NewRecorder()
+
+	handler.UpdateHealthProfile(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"blood_type":"O+"`) {
+		t.Fatalf("expected normalized blood type in response, got %s", res.Body.String())
+	}
+}
+
+func TestUpdateHealthProfileRejectsInvalid(t *testing.T) {
+	t.Parallel()
+	handler := New(fakePatientStore{user: models.User{ID: "usr_1", Role: models.RolePatient}})
+	for name, body := range map[string]string{
+		"bad blood type": `{"weight_kg":72.5,"height_cm":175,"blood_type":"XX"}`,
+		"low weight":     `{"weight_kg":5,"height_cm":175,"blood_type":"O+"}`,
+		"high weight":    `{"weight_kg":400,"height_cm":175,"blood_type":"O+"}`,
+		"short height":   `{"weight_kg":72.5,"height_cm":10,"blood_type":"O+"}`,
+		"bad json":       `{not json`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/v1/patients/me/health-profile", strings.NewReader(body))
+			req = req.WithContext(authz.WithClaims(req.Context(), &security.Claims{UserID: "usr_1", Role: models.RolePatient}))
+			res := httptest.NewRecorder()
+			handler.UpdateHealthProfile(res, req)
+			if res.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d body=%s", res.Code, res.Body.String())
+			}
+		})
+	}
+}
+
+func TestUpdateHealthProfileRequiresAuth(t *testing.T) {
+	t.Parallel()
+	handler := New(fakePatientStore{user: models.User{ID: "usr_1", Role: models.RolePatient}})
+	req := httptest.NewRequest(http.MethodPut, "/v1/patients/me/health-profile", strings.NewReader(`{"weight_kg":72.5,"height_cm":175,"blood_type":"O+"}`))
+	res := httptest.NewRecorder()
+
+	handler.UpdateHealthProfile(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", res.Code)
 	}
 }

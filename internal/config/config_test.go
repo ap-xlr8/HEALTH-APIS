@@ -102,6 +102,7 @@ func TestValidateRuntimeConfig(t *testing.T) {
 			StripeWebhookSecret: "whsec_live_123456",
 			JWTPrivateKeyPEM:    "real private key material",
 			JWTPublicKeyPEM:     "real public key material",
+			InternalAPIToken:    "internal_token",
 		}); err != nil {
 			t.Fatalf("expected tls mongo uri %q to be valid: %v", uri, err)
 		}
@@ -217,6 +218,39 @@ func TestLoadDotEnvFileRejectsInvalidLine(t *testing.T) {
 	}
 	if err := loadDotEnvFile(path); err == nil {
 		t.Fatal("expected invalid env line error")
+	}
+}
+
+func TestParseOrigins(t *testing.T) {
+	t.Parallel()
+	got := parseOrigins(" http://localhost:5173 , https://healthos-web.onrender.com ,, https://app.healthos.app ")
+	want := []string{"http://localhost:5173", "https://healthos-web.onrender.com", "https://app.healthos.app"}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected origin count %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected origin %q, want %q", got[i], want[i])
+		}
+	}
+	if got := parseOrigins(""); len(got) != 0 {
+		t.Fatalf("expected empty origins, got %#v", got)
+	}
+}
+
+func TestValidateRuntimeConfigRequiresInternalToken(t *testing.T) {
+	t.Parallel()
+	cfg := Config{
+		Port:                "8080",
+		Env:                 "prod",
+		MongoURI:            "mongodb+srv://cluster.example.com/healthos",
+		StripeSecretKey:     "sk_live_123456",
+		StripeWebhookSecret: "whsec_live_123456",
+		JWTPrivateKeyPEM:    "real private key material",
+		JWTPublicKeyPEM:     "real public key material",
+	}
+	if err := validateRuntimeConfig(cfg); err == nil {
+		t.Fatal("expected prod without INTERNAL_API_TOKEN to fail")
 	}
 }
 

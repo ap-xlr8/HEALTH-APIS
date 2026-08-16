@@ -28,6 +28,8 @@ type Config struct {
 	SendGridAPIKey      string
 	SendGridFromEmail   string
 	SendGridFromName    string
+	AllowedOrigins      []string
+	InternalAPIToken    string
 }
 
 func Load() (Config, error) {
@@ -48,6 +50,8 @@ func Load() (Config, error) {
 		SendGridAPIKey:      os.Getenv("SENDGRID_API_KEY"),
 		SendGridFromEmail:   getEnv("SENDGRID_FROM_EMAIL", "notifications@healthos.app"),
 		SendGridFromName:    getEnv("SENDGRID_FROM_NAME", "BioGuard Health Platform"),
+		AllowedOrigins:      parseOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,https://healthos-web.onrender.com,https://health-apis.onrender.com")),
+		InternalAPIToken:    os.Getenv("INTERNAL_API_TOKEN"),
 	}
 
 	var missing []string
@@ -102,6 +106,9 @@ func validateRuntimeConfig(cfg Config) error {
 			return errors.New("staging and prod require real JWT key material")
 		}
 	}
+	if cfg.Env == "prod" && strings.TrimSpace(cfg.InternalAPIToken) == "" {
+		return errors.New("prod requires INTERNAL_API_TOKEN to protect /metrics and API specs")
+	}
 	return nil
 }
 
@@ -128,6 +135,16 @@ func mongoURITLSEnabled(rawURI string) bool {
 	}
 	query := parsed.Query()
 	return strings.EqualFold(query.Get("tls"), "true") || strings.EqualFold(query.Get("ssl"), "true")
+}
+
+func parseOrigins(raw string) []string {
+	var origins []string
+	for _, part := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	return origins
 }
 
 func getEnv(key, fallback string) string {

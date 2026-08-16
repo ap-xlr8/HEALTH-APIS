@@ -198,4 +198,3 @@ func (h *Hub) SendToPatient(patientID string, payload any) {
 func RejectNonWebSocket(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteError(w, http.StatusBadRequest, "websocket upgrade required")
 }
-

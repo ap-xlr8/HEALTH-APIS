@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime"
@@ -75,7 +76,7 @@ func New(cfg config.Config, logger *slog.Logger, mongoStore *store.Mongo) (*Serv
 		limiter:       NewRateLimiter(),
 		identity:      identity.New(mongoStore, cfg.JWTPrivateKey, cfg.JWTPublicKey, emailClient),
 		health:        health.New(mongoStore, hub),
-		alerts:        alerts.New(mongoStore),
+		alerts:        alerts.New(mongoStore, hub),
 		patients:      patients.New(mongoStore),
 		clinical:      clinical.New(mongoStore),
 		devices:       devices.NewHandler(mongoStore),
@@ -108,26 +109,35 @@ func (s *Server) Routes() http.Handler {
 			},
 		})
 	})
-	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /metrics", s.internalToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var memStats runtime.MemStats
 		runtime.ReadMemStats(&memStats)
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"status":            "success",
-			"uptime_seconds":    time.Since(s.startTime).Seconds(),
-			"environment":       s.cfg.Env,
-			"goroutines":        runtime.NumGoroutine(),
-			"alloc_bytes":       memStats.Alloc,
-			"total_alloc_bytes": memStats.TotalAlloc,
-			"sys_bytes":         memStats.Sys,
-			"num_gc":            memStats.NumGC,
-		})
-	})
-	mux.HandleFunc("GET /v1/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		fmt.Fprintf(w, "# HELP go_goroutines Number of goroutines currently running.\n")
+		fmt.Fprintf(w, "# TYPE go_goroutines gauge\n")
+		fmt.Fprintf(w, "go_goroutines %d\n", runtime.NumGoroutine())
+		fmt.Fprintf(w, "# HELP process_uptime_seconds Seconds since the process started.\n")
+		fmt.Fprintf(w, "# TYPE process_uptime_seconds gauge\n")
+		fmt.Fprintf(w, "process_uptime_seconds %g\n", time.Since(s.startTime).Seconds())
+		fmt.Fprintf(w, "# HELP go_memstats_alloc_bytes Number of bytes allocated and still in use.\n")
+		fmt.Fprintf(w, "# TYPE go_memstats_alloc_bytes gauge\n")
+		fmt.Fprintf(w, "go_memstats_alloc_bytes %d\n", memStats.Alloc)
+		fmt.Fprintf(w, "# HELP go_memstats_sys_bytes Number of bytes obtained from the system.\n")
+		fmt.Fprintf(w, "# TYPE go_memstats_sys_bytes gauge\n")
+		fmt.Fprintf(w, "go_memstats_sys_bytes %d\n", memStats.Sys)
+		fmt.Fprintf(w, "# HELP go_memstats_gc_count Number of completed GC cycles.\n")
+		fmt.Fprintf(w, "# TYPE go_memstats_gc_count counter\n")
+		fmt.Fprintf(w, "go_memstats_gc_count %d\n", memStats.NumGC)
+		fmt.Fprintf(w, "# HELP healthos_environment Current runtime environment.\n")
+		fmt.Fprintf(w, "# TYPE healthos_environment gauge\n")
+		fmt.Fprintf(w, "healthos_environment{env=%q} 1\n", s.cfg.Env)
+	})))
+	mux.Handle("GET /v1/openapi.yaml", s.internalToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "api/openapi/openapi.yaml")
-	})
-	mux.HandleFunc("GET /v1/asyncapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /v1/asyncapi.yaml", s.internalToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "api/asyncapi/asyncapi.yaml")
-	})
+	})))
 
 	authLimit := func(h http.Handler) http.Handler {
 		return s.limiter.Middleware(100, ipKey, h)
@@ -144,8 +154,12 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /v1/auth/2fa/web/verify", authLimit(http.HandlerFunc(s.identity.Verify2FAWeb)))
 	mux.Handle("POST /v1/auth/2fa/resend", authLimit(http.HandlerFunc(s.identity.Resend2FA)))
 	mux.Handle("POST /v1/auth/refresh", authLimit(http.HandlerFunc(s.identity.Refresh)))
-	mux.Handle("POST /v1/auth/logout", authLimit(http.HandlerFunc(s.identity.LogoutMobile)))
-	mux.Handle("POST /v1/auth/web/logout", authLimit(http.HandlerFunc(s.identity.LogoutWeb)))
+	mux.Handle("POST /v1/auth/logout", s.authz.RequireAuth(authLimit(http.HandlerFunc(s.identity.LogoutMobile))))
+	mux.Handle("POST /v1/auth/web/logout", s.authz.RequireAuth(authLimit(http.HandlerFunc(s.identity.LogoutWeb))))
+	mux.Handle("POST /v1/auth/forgot-password", authLimit(http.HandlerFunc(s.identity.ForgotPassword)))
+	mux.Handle("POST /v1/auth/reset-password", authLimit(http.HandlerFunc(s.identity.ResetPassword)))
+	mux.Handle("GET /reset-password", http.HandlerFunc(s.identity.ResetPasswordPage))
+	mux.Handle("POST /reset-password", authLimit(http.HandlerFunc(s.identity.ResetPasswordPage)))
 	mux.Handle("POST /v1/subscriptions/webhook", authLimit(http.HandlerFunc(s.subscriptions.StripeWebhook)))
 
 	mux.Handle("POST /v1/admin/break-glass/request", protected(s.authz.Authorize(
@@ -183,6 +197,19 @@ func (s *Server) Routes() http.Handler {
 		http.HandlerFunc(s.health.ListMeasurements),
 	)))
 
+	mux.Handle("POST /v1/alerts/sos", protected(s.authz.Authorize(
+		"health_alerts",
+		models.ScopeWriteMeasurements,
+		[]string{models.RolePatient},
+		func(r *http.Request) string {
+			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
+				return claims.UserID
+			}
+			return ""
+		},
+		http.HandlerFunc(s.alerts.TriggerSOS),
+	)))
+
 	mux.Handle("GET /v1/alerts/{id}", protected(s.authz.AuthorizeResolved(
 		"health_alerts",
 		models.ScopeReadAlerts,
@@ -210,6 +237,18 @@ func (s *Server) Routes() http.Handler {
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.identity.Me),
+	)))
+	mux.Handle("PUT /v1/patients/me/health-profile", protected(s.authz.Authorize(
+		"profile",
+		models.ScopeWritePatient,
+		[]string{models.RolePatient},
+		func(r *http.Request) string {
+			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
+				return claims.UserID
+			}
+			return ""
+		},
+		http.HandlerFunc(s.patients.UpdateHealthProfile),
 	)))
 	mux.Handle("GET /v1/patients/{id}", protected(s.authz.Authorize(
 		"patients",
@@ -393,5 +432,27 @@ func (s *Server) Routes() http.Handler {
 		http.HandlerFunc(s.realtime.Serve),
 	)))
 
-	return secureHeaders(LoggingMiddleware(s.logger)(mux))
+	return s.secureHeaders(LoggingMiddleware(s.logger)(mux))
+}
+
+// internalToken protects operational/internal routes (/metrics and API specs).
+// In dev (without a configured token) it stays open for local tooling; in any
+// other environment it fails closed so an unconfigured token never exposes data.
+func (s *Server) internalToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.InternalAPIToken == "" {
+			if s.cfg.Env != "dev" {
+				httpx.WriteError(w, http.StatusServiceUnavailable, "internal api token is not configured")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		token := httpx.BearerToken(r)
+		if token == "" || token != s.cfg.InternalAPIToken {
+			httpx.WriteError(w, http.StatusUnauthorized, "invalid internal api token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

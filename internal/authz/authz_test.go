@@ -143,7 +143,7 @@ func TestRequireAuthRejectsCookieWithoutCSRF(t *testing.T) {
 	}
 }
 
-func TestRequireAuthRejectsCookieGETWithoutCSRF(t *testing.T) {
+func TestRequireAuthAllowsCookieGETWithoutCSRFAndExposesToken(t *testing.T) {
 	t.Parallel()
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -155,15 +155,22 @@ func TestRequireAuthRejectsCookieGETWithoutCSRF(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
 	req.AddCookie(&http.Cookie{Name: "access_token", Value: token})
+	req.AddCookie(&http.Cookie{Name: "csrf_token", Value: "csrf"})
 	res := httptest.NewRecorder()
 
+	// Safe GETs authenticated by cookie must NOT require a CSRF header (CSRF only
+	// protects state-changing requests). The CSRF token is exposed as a response
+	// header so the SPA can re-acquire it after a full reload.
 	New(&privateKey.PublicKey, fakeAuthzStore{user: models.User{ID: "usr_1", Role: models.RolePatient}}).
 		RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			t.Fatal("handler should not run")
+			w.WriteHeader(http.StatusNoContent)
 		})).ServeHTTP(res, req)
 
-	if res.Code != http.StatusForbidden {
-		t.Fatalf("expected csrf rejection, got %d", res.Code)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("expected cookie GET without csrf header to be allowed, got %d", res.Code)
+	}
+	if got := res.Header().Get("X-CSRF-Token"); got != "csrf" {
+		t.Fatalf("expected X-CSRF-Token response header, got %q", got)
 	}
 }
 

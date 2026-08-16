@@ -24,17 +24,54 @@ type Mongo struct {
 }
 
 func NewMongo(ctx context.Context, uri, database string) (*Mongo, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri).SetMonitor(auditLogCommandMonitor()))
+	opts := options.Client().
+		ApplyURI(uri).
+		SetMonitor(auditLogCommandMonitor()).
+		SetServerSelectionTimeout(10 * time.Second).
+		SetConnectTimeout(5 * time.Second)
+
+	var client *mongo.Client
+	err := connectWithRetry(ctx, 15*time.Second, 500*time.Millisecond, 4*time.Second, func(ctx context.Context) error {
+		c, err := mongo.Connect(ctx, opts)
+		if err != nil {
+			return err
+		}
+		if err := c.Ping(ctx, nil); err != nil {
+			_ = c.Disconnect(context.Background())
+			return err
+		}
+		client = c
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := client.Ping(ctx, nil); err != nil {
-		_ = client.Disconnect(context.Background())
-		return nil, err
-	}
 	return &Mongo{client: client, db: client.Database(database)}, nil
+}
+
+// connectWithRetry runs fn until it succeeds, the deadline elapses, or ctx is cancelled,
+// sleeping an exponentially growing backoff between attempts so transient Mongo outages
+// do not crash the service at startup.
+func connectWithRetry(ctx context.Context, deadline time.Duration, initialBackoff, maxBackoff time.Duration, fn func(context.Context) error) error {
+	connectCtx, cancel := context.WithTimeout(ctx, deadline)
+	defer cancel()
+
+	backoff := initialBackoff
+	for attempt := 1; ; attempt++ {
+		err := fn(connectCtx)
+		if err == nil {
+			return nil
+		}
+		slog.Warn("mongo_connect_attempt_failed", "attempt", attempt, "error", err, "retry_in", backoff)
+		select {
+		case <-connectCtx.Done():
+			return connectCtx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+		}
+	}
 }
 
 func auditLogCommandMonitor() *event.CommandMonitor {
@@ -89,6 +126,7 @@ func (m *Mongo) EnsureIndexes(ctx context.Context) error {
 			{Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)},
 			{Keys: bson.D{{Key: "role", Value: 1}}},
 			{Keys: bson.D{{Key: "verification_token", Value: 1}}, Options: options.Index().SetSparse(true)},
+			{Keys: bson.D{{Key: "password_reset_token", Value: 1}}, Options: options.Index().SetSparse(true)},
 		},
 		"sessions": {
 			{Keys: bson.D{{Key: "user_id", Value: 1}}},
@@ -252,7 +290,6 @@ func (m *Mongo) DeleteSessionsByUserID(ctx context.Context, userID string) error
 	_, err := m.db.Collection("sessions").DeleteMany(ctx, bson.M{"user_id": userID})
 	return err
 }
-
 
 func (m *Mongo) InsertMeasurements(ctx context.Context, measurements []models.Measurement) error {
 	if len(measurements) == 0 {
@@ -722,7 +759,7 @@ func (m *Mongo) UpdateUserFailedLogins(ctx context.Context, userID string, attem
 	update := bson.M{
 		"$set": bson.M{
 			"failed_login_attempts": attempts,
-			"lockout_until":          lockoutUntil,
+			"lockout_until":         lockoutUntil,
 		},
 	}
 	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
@@ -733,7 +770,55 @@ func (m *Mongo) ResetUserFailedLogins(ctx context.Context, userID string) error 
 	update := bson.M{
 		"$set": bson.M{
 			"failed_login_attempts": 0,
-			"lockout_until":          nil,
+			"lockout_until":         nil,
+		},
+	}
+	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
+	return err
+}
+
+func (m *Mongo) SetUserPasswordResetToken(ctx context.Context, userID, token string, expiresAt time.Time) error {
+	update := bson.M{
+		"$set": bson.M{
+			"password_reset_token":      token,
+			"password_reset_expires_at": expiresAt,
+		},
+	}
+	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
+	return err
+}
+
+func (m *Mongo) FindUserByPasswordResetToken(ctx context.Context, token string) (models.User, error) {
+	var user models.User
+	err := m.db.Collection("users").FindOne(ctx, bson.M{"password_reset_token": token}).Decode(&user)
+	return user, normalizeFindErr(err)
+}
+
+func (m *Mongo) ResetUserPassword(ctx context.Context, token, passwordHash string) (models.User, error) {
+	now := time.Now().UTC()
+	filter := bson.M{
+		"password_reset_token":      token,
+		"password_reset_expires_at": bson.M{"$gt": now},
+	}
+	update := bson.M{
+		"$set": bson.M{
+			"password_hash": passwordHash,
+		},
+		"$unset": bson.M{
+			"password_reset_token":      "",
+			"password_reset_expires_at": "",
+		},
+	}
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
+	var user models.User
+	err := m.db.Collection("users").FindOneAndUpdate(ctx, filter, update, opts).Decode(&user)
+	return user, normalizeFindErr(err)
+}
+
+func (m *Mongo) UpdateUserHealthProfile(ctx context.Context, userID string, profile models.HealthProfile) error {
+	update := bson.M{
+		"$set": bson.M{
+			"health_profile": profile,
 		},
 	}
 	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)

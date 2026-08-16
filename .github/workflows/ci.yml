@@ -46,6 +46,16 @@ jobs:
           test -n "$NANCY_GUIDE_TOKEN"
           go install github.com/sonatype-nexus-community/nancy/v2@v2.1.0
           go list -json -deps ./... | nancy sleuth --guide-token "$NANCY_GUIDE_TOKEN"
+      - name: Generate SBOM
+        run: |
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.8.0
+          cyclonedx-gomod mod -output sbom.xml -licenses -json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.xml
+          if-no-files-found: error
       - name: Secret scan
         uses: trufflesecurity/trufflehog@v3.96.0
         with:
@@ -88,8 +98,19 @@ jobs:
             -t "$STAGING_API_URL" \
             -r zap-report.html
 
-  deploy-production:
+  release-gate:
     needs: dast
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Wait for manual approval
+        run: |
+          echo "::notice::Release a producción requiere aprobación manual."
+          echo "Configure required reviewers on the 'production' environment for an enforced approval gate."
+
+  deploy-production:
+    needs: release-gate
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment: production

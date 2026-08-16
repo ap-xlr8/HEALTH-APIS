@@ -60,32 +60,51 @@ func (rl *RateLimiter) allow(key string, capacity float64, window time.Duration)
 func (rl *RateLimiter) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	for range ticker.C {
-		rl.mu.Lock()
-		cutoff := time.Now().Add(-10 * time.Minute)
-		for key, b := range rl.buckets {
-			if b.lastSeen.Before(cutoff) {
-				delete(rl.buckets, key)
-			}
-		}
-		rl.mu.Unlock()
+		rl.sweep(time.Now().Add(-10 * time.Minute))
 	}
 }
 
-func ipKey(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
-			return strings.TrimSpace(parts[0])
+func (rl *RateLimiter) sweep(cutoff time.Time) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	for key, b := range rl.buckets {
+		if b.lastSeen.Before(cutoff) {
+			delete(rl.buckets, key)
 		}
 	}
-	if xrip := r.Header.Get("X-Real-IP"); xrip != "" {
-		return strings.TrimSpace(xrip)
+}
+
+func (s *Server) isAllowedOrigin(origin string) bool {
+	if origin == "" {
+		return false
 	}
+	clean := strings.TrimSpace(strings.ToLower(origin))
+	for _, allowed := range s.cfg.AllowedOrigins {
+		if clean == strings.TrimSpace(strings.ToLower(allowed)) {
+			return true
+		}
+	}
+	return false
+}
+
+func ipKey(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
+	if err != nil {
+		host = r.RemoteAddr
 	}
-	return r.RemoteAddr
+	// Only trust forwarded headers if request came from localhost or trusted reverse proxy
+	if host == "127.0.0.1" || host == "::1" || strings.HasPrefix(host, "10.") || strings.HasPrefix(host, "172.") || strings.HasPrefix(host, "192.168.") {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+				return strings.TrimSpace(parts[0])
+			}
+		}
+		if xrip := r.Header.Get("X-Real-IP"); xrip != "" {
+			return strings.TrimSpace(xrip)
+		}
+	}
+	return host
 }
 
 func userKey(r *http.Request) string {
@@ -95,10 +114,10 @@ func userKey(r *http.Request) string {
 	return ipKey(r)
 }
 
-func secureHeaders(next http.Handler) http.Handler {
+func (s *Server) secureHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" {
+		if origin != "" && s.isAllowedOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
@@ -123,4 +142,3 @@ func secureHeaders(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-

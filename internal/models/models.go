@@ -19,24 +19,32 @@ const (
 	ScopeWritePatient      = "write:patient"
 )
 
+type HealthProfile struct {
+	WeightKg  float64 `bson:"weight_kg" json:"weight_kg"`
+	HeightCm  int     `bson:"height_cm" json:"height_cm"`
+	BloodType string  `bson:"blood_type" json:"blood_type"`
+}
+
 type User struct {
-	ID                    string     `bson:"_id" json:"id"`
-	Email                 string     `bson:"email" json:"email"`
-	PasswordHash          string     `bson:"password_hash" json:"-"`
-	Role                  string     `bson:"role" json:"role"`
-	FirstName             string     `bson:"first_name" json:"first_name"`
-	LastName              string     `bson:"last_name" json:"last_name"`
-	Age                   int        `bson:"age,omitempty" json:"age,omitempty"`
-	HealthProfile         any        `bson:"health_profile,omitempty" json:"health_profile,omitempty"`
-	ActiveConditions      []string   `bson:"active_conditions,omitempty" json:"active_conditions,omitempty"`
-	EmailVerified         bool       `bson:"email_verified" json:"email_verified"`
-	VerificationToken     string     `bson:"verification_token,omitempty" json:"-"`
-	VerificationExpiresAt *time.Time `bson:"verification_expires_at,omitempty" json:"-"`
-	TwoFactorCode         string     `bson:"two_factor_code,omitempty" json:"-"`
-	TwoFactorExpiresAt    *time.Time `bson:"two_factor_expires_at,omitempty" json:"-"`
-	FailedLoginAttempts   int        `bson:"failed_login_attempts,omitempty" json:"-"`
-	LockoutUntil          *time.Time `bson:"lockout_until,omitempty" json:"-"`
-	CreatedAt             time.Time  `bson:"created_at" json:"created_at"`
+	ID                     string         `bson:"_id" json:"id"`
+	Email                  string         `bson:"email" json:"email"`
+	PasswordHash           string         `bson:"password_hash" json:"-"`
+	Role                   string         `bson:"role" json:"role"`
+	FirstName              string         `bson:"first_name" json:"first_name"`
+	LastName               string         `bson:"last_name" json:"last_name"`
+	Age                    int            `bson:"age,omitempty" json:"age,omitempty"`
+	HealthProfile          *HealthProfile `bson:"health_profile,omitempty" json:"health_profile,omitempty"`
+	ActiveConditions       []string       `bson:"active_conditions,omitempty" json:"active_conditions,omitempty"`
+	EmailVerified          bool           `bson:"email_verified" json:"email_verified"`
+	VerificationToken      string         `bson:"verification_token,omitempty" json:"-"`
+	VerificationExpiresAt  *time.Time     `bson:"verification_expires_at,omitempty" json:"-"`
+	TwoFactorCode          string         `bson:"two_factor_code,omitempty" json:"-"`
+	TwoFactorExpiresAt     *time.Time     `bson:"two_factor_expires_at,omitempty" json:"-"`
+	FailedLoginAttempts    int            `bson:"failed_login_attempts,omitempty" json:"-"`
+	LockoutUntil           *time.Time     `bson:"lockout_until,omitempty" json:"-"`
+	PasswordResetToken     string         `bson:"password_reset_token,omitempty" json:"-"`
+	PasswordResetExpiresAt *time.Time     `bson:"password_reset_expires_at,omitempty" json:"-"`
+	CreatedAt              time.Time      `bson:"created_at" json:"created_at"`
 }
 
 type Session struct {

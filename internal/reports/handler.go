@@ -28,15 +28,32 @@ func New(store Store) Handler {
 
 func (h Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		URL    string `json:"url"`
-		Format string `json:"format"`
+		Title    string `json:"title"`
+		Category string `json:"category"`
+		URL      string `json:"url"`
+		Format   string `json:"format"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	url, format := strings.TrimSpace(req.URL), strings.TrimSpace(req.Format)
-	if !strings.HasPrefix(url, "s3://") || len(url) > 500 || format != "pdf" {
+	format := strings.TrimSpace(req.Format)
+	if format == "" {
+		format = "pdf"
+	}
+	if format != "pdf" {
+		httpx.WriteError(w, http.StatusBadRequest, "format must be pdf")
+		return
+	}
+	url := strings.TrimSpace(req.URL)
+	patientID := r.PathValue("id")
+	if url == "" {
+		slug := strings.ToLower(strings.ReplaceAll(req.Title, " ", "_"))
+		if slug == "" {
+			slug = "clinical_summary"
+		}
+		url = "s3://healthos-clinical-reports/" + patientID + "/report_" + slug + ".pdf"
+	} else if !strings.HasPrefix(url, "s3://") || len(url) > 500 {
 		httpx.WriteError(w, http.StatusBadRequest, "url must be an s3:// PDF report reference")
 		return
 	}
@@ -45,13 +62,16 @@ func (h Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "secure id generation failed")
 		return
 	}
-	claims, _ := authz.ClaimsFromContext(r.Context())
+	createdBy := ""
+	if claims, ok := authz.ClaimsFromContext(r.Context()); ok && claims != nil {
+		createdBy = claims.UserID
+	}
 	report := models.Report{
 		ID:        "rep_" + id,
-		PatientID: r.PathValue("id"),
+		PatientID: patientID,
 		URL:       url,
 		Format:    format,
-		CreatedBy: claims.UserID,
+		CreatedBy: createdBy,
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := h.store.CreateReport(r.Context(), report); err != nil {

@@ -13,6 +13,7 @@ import (
 type Sender interface {
 	SendVerificationEmail(ctx context.Context, toEmail, toName, token, code string) error
 	Send2FACode(ctx context.Context, toEmail, toName, code, purpose string) error
+	SendPasswordReset(ctx context.Context, toEmail, toName, resetURL string) error
 }
 
 type SendGridClient struct {
@@ -20,6 +21,7 @@ type SendGridClient struct {
 	fromEmail  string
 	fromName   string
 	httpClient *http.Client
+	sendURL    string
 }
 
 func NewSendGridClient(apiKey, fromEmail, fromName string) *SendGridClient {
@@ -96,6 +98,42 @@ func (s *SendGridClient) SendVerificationEmail(ctx context.Context, toEmail, toN
 	return s.sendMail(ctx, toEmail, toName, subject, htmlBody)
 }
 
+func (s *SendGridClient) SendPasswordReset(ctx context.Context, toEmail, toName, resetURL string) error {
+	if s.apiKey == "" || s.fromEmail == "" {
+		return nil
+	}
+	if toName == "" {
+		toName = "Usuario de Health OS"
+	}
+	subject := "Restablece tu contraseña - Health OS"
+	htmlBody := fmt.Sprintf(`
+		<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+			<div style="text-align: center; margin-bottom: 24px;">
+				<h1 style="color: #0284c7; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">HEALTH OS</h1>
+				<p style="color: #64748b; margin: 4px 0 0 0; font-size: 13px;">Plataforma de Telemetría Clínica Segura</p>
+			</div>
+			
+			<p style="color: #1e293b; font-size: 15px; line-height: 1.5; margin: 0 0 16px 0;">
+				Hola <strong>%s</strong>,
+			</p>
+			<p style="color: #475569; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+				Recibimos una solicitud para restablecer la contraseña de tu cuenta. El enlace es válido por <strong>30 minutos</strong>. Si no solicitaste este cambio, ignora este correo.
+			</p>
+			
+			<div style="text-align: center; margin: 24px 0;">
+				<a href="%s" style="display: inline-block; background: #0284c7; color: #ffffff; text-decoration: none; font-weight: 700; font-size: 15px; padding: 12px 28px; border-radius: 8px;">Restablecer contraseña</a>
+			</div>
+			
+			<p style="color: #64748b; font-size: 12px; line-height: 1.5; margin: 20px 0 0 0; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+				Si el botón no funciona, copia y pega el siguiente enlace en tu navegador:
+			</p>
+			<code style="word-break: break-all; background: #f1f5f9; padding: 4px 8px; border-radius: 4px; font-size: 12px;">%s</code>
+		</div>
+	`, toName, resetURL, resetURL)
+
+	return s.sendMail(ctx, toEmail, toName, subject, htmlBody)
+}
+
 func (s *SendGridClient) sendMail(ctx context.Context, toEmail, toName, subject, htmlBody string) error {
 	payload := sendGridPayload{
 		Personalizations: []sendGridPersonalization{
@@ -123,7 +161,12 @@ func (s *SendGridClient) sendMail(ctx context.Context, toEmail, toName, subject,
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.sendgrid.com/v3/mail/send", bytes.NewReader(bodyBytes))
+	endpoint := s.sendURL
+	if endpoint == "" {
+		endpoint = "https://api.sendgrid.com/v3/mail/send"
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return err
 	}
@@ -162,5 +205,3 @@ type sendGridContent struct {
 	Type  string `json:"type"`
 	Value string `json:"value"`
 }
-
-
