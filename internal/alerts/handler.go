@@ -19,6 +19,7 @@ type Store interface {
 	FindAlertByID(ctx context.Context, id string) (models.Alert, error)
 	AcknowledgeAlert(ctx context.Context, id string) (models.Alert, error)
 	CreateAlert(ctx context.Context, alert models.Alert) error
+	ListAlerts(ctx context.Context, patientID string) ([]models.Alert, error)
 }
 
 type Broadcaster interface {
@@ -137,4 +138,17 @@ func (h Handler) Acknowledge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, alert)
+}
+
+func (h Handler) List(w http.ResponseWriter, r *http.Request) {
+	patientID := r.URL.Query().Get("patientId")
+	if patientID == "" {
+		patientID = r.URL.Query().Get("patient_id")
+	}
+	alerts, err := h.store.ListAlerts(r.Context(), patientID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to list alerts")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, alerts)
 }

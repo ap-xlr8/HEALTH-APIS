@@ -65,6 +65,24 @@ func (m Middleware) RequireAuth(next http.Handler) http.Handler {
 			}
 		}
 		if token == "" {
+			// Extract token from Sec-WebSocket-Protocol header e.g. "healthos, <jwt-token>"
+			if wsProto := r.Header.Get("Sec-WebSocket-Protocol"); wsProto != "" {
+				parts := strings.Split(wsProto, ",")
+				for _, p := range parts {
+					trimmed := strings.TrimSpace(p)
+					if trimmed != "" && trimmed != "healthos" {
+						token = trimmed
+						break
+					}
+				}
+			}
+		}
+		if token == "" {
+			if qTok := r.URL.Query().Get("token"); qTok != "" {
+				token = strings.TrimSpace(qTok)
+			}
+		}
+		if token == "" {
 			httpx.WriteError(w, http.StatusUnauthorized, "missing access token")
 			return
 		}

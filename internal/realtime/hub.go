@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,9 +45,16 @@ func (h *Hub) SetAuthChecker(checker AuthChecker) {
 
 func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) {
 	upgrader := websocket.Upgrader{
-		CheckOrigin: sameHostOrigin,
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+		Subprotocols: []string{"healthos"},
 	}
-	conn, err := upgrader.Upgrade(w, r, nil)
+	responseHeader := http.Header{}
+	if wsProto := r.Header.Get("Sec-WebSocket-Protocol"); strings.Contains(wsProto, "healthos") {
+		responseHeader.Set("Sec-WebSocket-Protocol", "healthos")
+	}
+	conn, err := upgrader.Upgrade(w, r, responseHeader)
 	if err != nil {
 		return
 	}

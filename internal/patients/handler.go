@@ -72,6 +72,95 @@ func (h Handler) GetPatient(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h Handler) GetHealthProfile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" || id == "me" {
+		if claims, ok := authz.ClaimsFromContext(r.Context()); ok && claims != nil {
+			id = claims.UserID
+		}
+	}
+	if id == "" || len(id) > 80 {
+		httpx.WriteError(w, http.StatusBadRequest, "patient id is required")
+		return
+	}
+	user, err := h.store.FindUserByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "patient not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "patient lookup failed")
+		return
+	}
+	if user.Role != models.RolePatient {
+		httpx.WriteError(w, http.StatusNotFound, "patient not found")
+		return
+	}
+
+	hp := user.HealthProfile
+	var basal models.HealthProfile
+	if hp != nil {
+		basal = *hp
+	}
+	if basal.BloodType == "" {
+		basal.BloodType = "O"
+	}
+	if basal.RhFactor == "" {
+		basal.RhFactor = "+"
+	}
+	if basal.WeightKg == 0 {
+		basal.WeightKg = 70
+	}
+	if basal.HeightCm == 0 {
+		basal.HeightCm = 170
+	}
+
+	bmi := 22.5
+	if basal.HeightCm > 0 {
+		hM := float64(basal.HeightCm) / 100.0
+		bmi = basal.WeightKg / (hM * hM)
+	}
+
+	emergencyContact := map[string]string{"name": "", "phone": "", "relation": ""}
+	if basal.EmergencyContact != nil {
+		emergencyContact["name"] = basal.EmergencyContact.Name
+		emergencyContact["phone"] = basal.EmergencyContact.Phone
+		emergencyContact["relation"] = basal.EmergencyContact.Relationship
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"patientId": user.ID,
+		"basalProfile": map[string]any{
+			"bloodType":                basal.BloodType,
+			"rhFactor":                 basal.RhFactor,
+			"weightKg":                 basal.WeightKg,
+			"heightCm":                 basal.HeightCm,
+			"bmi":                      bmi,
+			"bmiCategory":              "normal",
+			"primaryEmergencyContact":  emergencyContact,
+			"updatedAt":                user.CreatedAt.Format("2006-01-02"),
+		},
+		"allergies": []any{},
+		"medications": []any{},
+		"pathological": map[string]any{
+			"chronicDiseases":  []any{},
+			"surgeries":        []any{},
+			"hospitalizations": []any{},
+			"implants":         []any{},
+			"transfusions":     []any{},
+		},
+		"gynecological": map[string]any{"applicable": false},
+		"familyHistory": []any{},
+		"lifestyle": map[string]any{
+			"tobacco":          map[string]any{"status": "never"},
+			"alcohol":          map[string]any{"frequency": "never"},
+			"physicalActivity": map[string]any{"level": "moderate", "daysPerWeek": 3, "minutesPerSession": 30},
+			"sleep":            map[string]any{"averageHours": 7.5, "quality": "good"},
+			"dietType":         "balanced",
+		},
+	})
+}
+
 func (h Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {
 	claims, ok := authz.ClaimsFromContext(r.Context())
 	if !ok || claims == nil || claims.UserID == "" {
@@ -79,18 +168,84 @@ func (h Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req healthProfileRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
+	targetUserID := claims.UserID
+	if pathID := r.PathValue("id"); pathID != "" && pathID != "me" && claims.Role == models.RoleAdmin {
+		targetUserID = pathID
+	}
+
+	var rawMap map[string]any
+	if err := httpx.DecodeJSON(r, &rawMap); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 
-	bloodType := strings.ToUpper(strings.TrimSpace(req.BloodType))
-	if req.WeightKg < 20 || req.WeightKg > 300 {
+	weightKg := 70.0
+	heightCm := 170
+	bloodType := "O+"
+	rhFactor := "+"
+	birthDate := ""
+	biologicalSex := ""
+	phone := ""
+	address := ""
+	var emergencyContact *models.EmergencyContact
+	var baselineVitals *models.BaselineVitals
+
+	// Check if body is wrapped in basalProfile
+	if bp, ok := rawMap["basalProfile"].(map[string]any); ok {
+		if w, ok := bp["weightKg"].(float64); ok && w > 0 {
+			weightKg = w
+		}
+		if h, ok := bp["heightCm"].(float64); ok && h > 0 {
+			heightCm = int(h)
+		}
+		if bt, ok := bp["bloodType"].(string); ok && bt != "" {
+			bloodType = strings.ToUpper(bt)
+		}
+		if rh, ok := bp["rhFactor"].(string); ok && rh != "" {
+			rhFactor = rh
+		}
+		if ec, ok := bp["primaryEmergencyContact"].(map[string]any); ok {
+			name, _ := ec["name"].(string)
+			phoneNum, _ := ec["phone"].(string)
+			rel, _ := ec["relation"].(string)
+			emergencyContact = &models.EmergencyContact{
+				Name:         name,
+				Phone:        phoneNum,
+				Relationship: rel,
+			}
+		}
+	} else {
+		if w, ok := rawMap["weight_kg"].(float64); ok && w > 0 {
+			weightKg = w
+		}
+		if h, ok := rawMap["height_cm"].(float64); ok && h > 0 {
+			heightCm = int(h)
+		}
+		if bt, ok := rawMap["blood_type"].(string); ok && bt != "" {
+			bloodType = strings.ToUpper(bt)
+		}
+		if rh, ok := rawMap["rh_factor"].(string); ok && rh != "" {
+			rhFactor = rh
+		}
+		if bd, ok := rawMap["birth_date"].(string); ok {
+			birthDate = bd
+		}
+		if bs, ok := rawMap["biological_sex"].(string); ok {
+			biologicalSex = bs
+		}
+		if ph, ok := rawMap["phone"].(string); ok {
+			phone = ph
+		}
+		if addr, ok := rawMap["address"].(string); ok {
+			address = addr
+		}
+	}
+
+	if weightKg < 20 || weightKg > 300 {
 		httpx.WriteError(w, http.StatusBadRequest, "weight_kg must be between 20 and 300")
 		return
 	}
-	if req.HeightCm < 50 || req.HeightCm > 250 {
+	if heightCm < 50 || heightCm > 250 {
 		httpx.WriteError(w, http.StatusBadRequest, "height_cm must be between 50 and 250")
 		return
 	}
@@ -100,19 +255,19 @@ func (h Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	profile := models.HealthProfile{
-		WeightKg:         req.WeightKg,
-		HeightCm:         req.HeightCm,
+		WeightKg:         weightKg,
+		HeightCm:         heightCm,
 		BloodType:        bloodType,
-		RhFactor:         strings.TrimSpace(req.RhFactor),
-		BirthDate:        strings.TrimSpace(req.BirthDate),
-		BiologicalSex:    strings.ToLower(strings.TrimSpace(req.BiologicalSex)),
-		Phone:            strings.TrimSpace(req.Phone),
-		Address:          strings.TrimSpace(req.Address),
-		EmergencyContact: req.EmergencyContact,
-		BaselineVitals:   req.BaselineVitals,
+		RhFactor:         rhFactor,
+		BirthDate:        birthDate,
+		BiologicalSex:    biologicalSex,
+		Phone:            phone,
+		Address:          address,
+		EmergencyContact: emergencyContact,
+		BaselineVitals:   baselineVitals,
 	}
 
-	if err := h.store.UpdateUserHealthProfile(r.Context(), claims.UserID, profile); err != nil {
+	if err := h.store.UpdateUserHealthProfile(r.Context(), targetUserID, profile); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, "patient not found")
 			return

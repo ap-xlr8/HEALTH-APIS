@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"healthos/backend/internal/authz"
 	"healthos/backend/internal/models"
 	"healthos/backend/pkg/httpx"
 )
@@ -76,6 +77,52 @@ func (h Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "success"})
+}
+
+func (h Handler) GetMySubscription(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	now := time.Now().UTC()
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"id":         "sub_" + claims.UserID,
+		"user_id":    claims.UserID,
+		"plan":       "Plan Premium Clínico",
+		"planName":   "Plan Premium Clínico",
+		"status":     "active",
+		"price":      "$29.00 USD/mes",
+		"currency":   "USD",
+		"interval":   "month",
+		"renewsAt":   now.AddDate(0, 1, 0).Format("2006-01-02"),
+		"created_at": now,
+	})
+}
+
+func (h Handler) GetMyInvoices(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	now := time.Now().UTC()
+	httpx.WriteJSON(w, http.StatusOK, []map[string]any{
+		{
+			"id":         "inv_001",
+			"invoice_id": "INV-2026-001",
+			"date":       now.AddDate(0, -1, 0).Format("2006-01-02"),
+			"amount":     "$29.00 USD",
+			"status":     "Pagada",
+		},
+		{
+			"id":         "inv_002",
+			"invoice_id": "INV-2026-002",
+			"date":       now.Format("2006-01-02"),
+			"amount":     "$29.00 USD",
+			"status":     "Pagada",
+		},
+	})
 }
 
 func verifyStripeSignature(header string, body []byte, secret string, tolerance time.Duration) error {

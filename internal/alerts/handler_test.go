@@ -38,6 +38,15 @@ func (f *fakeAlertStore) CreateAlert(ctx context.Context, alert models.Alert) er
 	return nil
 }
 
+func (f *fakeAlertStore) ListAlerts(ctx context.Context, patientID string) ([]models.Alert, error) {
+	if f.alert.ID != "" {
+		if patientID == "" || f.alert.PatientID == patientID {
+			return []models.Alert{f.alert}, nil
+		}
+	}
+	return []models.Alert{}, nil
+}
+
 func TestGetAlert(t *testing.T) {
 	t.Parallel()
 	store := &fakeAlertStore{

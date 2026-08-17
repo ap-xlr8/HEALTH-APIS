@@ -349,6 +349,38 @@ paths:
                 properties:
                   status: { type: string, enum: [success] }
         '400': { $ref: '#/components/responses/Error' }
+  /v1/subscriptions/me:
+    get:
+      tags: [SUBSCRIPTIONS]
+      summary: Obtener informacion de suscripcion del usuario
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Datos de suscripcion
+          content:
+            application/json:
+              schema:
+                type: object
+        '401': { $ref: '#/components/responses/Error' }
+  /v1/subscriptions/me/invoices:
+    get:
+      tags: [SUBSCRIPTIONS]
+      summary: Listar facturas del usuario
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Lista de facturas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        '401': { $ref: '#/components/responses/Error' }
   /v1/admin/break-glass/request:
     post:
       tags: [ADMIN]
@@ -428,6 +460,29 @@ paths:
               schema:
                 $ref: '#/components/schemas/Alert'
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/alerts:
+    get:
+      tags: [ALERTAS]
+      summary: Listar alertas clinicas
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: patientId
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Lista de alertas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Alert'
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
   /v1/alerts/{id}:
@@ -551,6 +606,42 @@ paths:
                   data: { $ref: '#/components/schemas/UserPreferences' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
+  /v1/user/preferences:
+    get:
+      tags: [PROFILE]
+      summary: Obtener preferencias del usuario (alias)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Preferencias de usuario
+          content:
+            application/json:
+              schema:
+                type: object
+        '401': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [PROFILE]
+      summary: Actualizar preferencias del usuario (alias)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Preferencias actualizadas
+          content:
+            application/json:
+              schema:
+                type: object
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
   /v1/profile/caregiver:
     put:
       tags: [PROFILE]
@@ -656,6 +747,78 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/ml-estimates:
+    get:
+      tags: [ML]
+      summary: Estimaciones biometricas ML (alias)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Estimaciones biometricas
+          content:
+            application/json:
+              schema:
+                type: object
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/health-profile:
+    get:
+      tags: [PACIENTES]
+      summary: Obtener historia clinica / perfil de salud de un paciente
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Perfil clinico
+          content:
+            application/json:
+              schema:
+                type: object
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [PACIENTES]
+      summary: Actualizar perfil de salud de un paciente
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Perfil actualizado
+          content:
+            application/json:
+              schema:
+                type: object
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /v1/patients/me/health-profile:
     put:
       tags: [PACIENTES]

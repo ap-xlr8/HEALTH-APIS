@@ -226,6 +226,19 @@ func (s *Server) Routes() http.Handler {
 		http.HandlerFunc(s.alerts.TriggerSOS),
 	)))
 
+	mux.Handle("GET /v1/alerts", protected(s.authz.Authorize(
+		"health_alerts",
+		models.ScopeReadAlerts,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string {
+			patientID := r.URL.Query().Get("patientId")
+			if patientID == "" {
+				patientID = r.URL.Query().Get("patient_id")
+			}
+			return patientID
+		},
+		http.HandlerFunc(s.alerts.List),
+	)))
 	mux.Handle("GET /v1/alerts/{id}", protected(s.authz.AuthorizeResolved(
 		"health_alerts",
 		models.ScopeReadAlerts,
@@ -245,6 +258,21 @@ func (s *Server) Routes() http.Handler {
 			return alert.PatientID, err
 		},
 		http.HandlerFunc(s.alerts.Acknowledge),
+	)))
+
+	mux.Handle("GET /v1/subscriptions/me", protected(s.authz.Authorize(
+		"subscriptions",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.subscriptions.GetMySubscription),
+	)))
+	mux.Handle("GET /v1/subscriptions/me/invoices", protected(s.authz.Authorize(
+		"subscriptions",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.subscriptions.GetMyInvoices),
 	)))
 
 	mux.Handle("GET /v1/profile/me", protected(s.authz.Authorize(
@@ -268,12 +296,40 @@ func (s *Server) Routes() http.Handler {
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.identity.UpdatePreferences),
 	)))
+	mux.Handle("GET /v1/user/preferences", protected(s.authz.Authorize(
+		"profile",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.identity.GetPreferences),
+	)))
+	mux.Handle("PUT /v1/user/preferences", protected(s.authz.Authorize(
+		"profile",
+		models.ScopeWritePatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.identity.UpdatePreferences),
+	)))
 	mux.Handle("PUT /v1/profile/caregiver", protected(s.authz.Authorize(
 		"profile",
 		models.ScopeWritePatient,
 		[]string{models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.identity.UpdateCaregiverProfile),
+	)))
+	mux.Handle("GET /v1/patients/{id}/health-profile", protected(s.authz.Authorize(
+		"profile",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.patients.GetHealthProfile),
+	)))
+	mux.Handle("PUT /v1/patients/{id}/health-profile", protected(s.authz.Authorize(
+		"profile",
+		models.ScopeWritePatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.patients.UpdateHealthProfile),
 	)))
 	mux.Handle("PUT /v1/patients/me/health-profile", protected(s.authz.Authorize(
 		"profile",
@@ -302,6 +358,13 @@ func (s *Server) Routes() http.Handler {
 		http.HandlerFunc(s.ml.GetRiskAssessment),
 	)))
 	mux.Handle("GET /v1/patients/{id}/biometric-estimations", protected(s.authz.Authorize(
+		"biometric_estimations",
+		models.ScopeReadMeasurements,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.ml.GetBiometricEstimations),
+	)))
+	mux.Handle("GET /v1/patients/{id}/ml-estimates", protected(s.authz.Authorize(
 		"biometric_estimations",
 		models.ScopeReadMeasurements,
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},

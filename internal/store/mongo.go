@@ -370,6 +370,27 @@ func (m *Mongo) AcknowledgeAlert(ctx context.Context, id string) (models.Alert, 
 	return alert, normalizeFindErr(err)
 }
 
+func (m *Mongo) ListAlerts(ctx context.Context, patientID string) ([]models.Alert, error) {
+	filter := bson.M{}
+	if strings.TrimSpace(patientID) != "" {
+		filter["patient_id"] = strings.TrimSpace(patientID)
+	}
+	findOpts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(100)
+	cursor, err := m.db.Collection("health_alerts").Find(ctx, filter, findOpts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var alerts []models.Alert
+	if err := cursor.All(ctx, &alerts); err != nil {
+		return nil, err
+	}
+	if alerts == nil {
+		alerts = []models.Alert{}
+	}
+	return alerts, nil
+}
+
 func (m *Mongo) HasActiveRelationship(ctx context.Context, caregiverID, patientID string) (bool, error) {
 	count, err := m.db.Collection("relationships").CountDocuments(ctx, bson.M{
 		"caregiver_id": caregiverID,
