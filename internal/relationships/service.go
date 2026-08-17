@@ -15,6 +15,7 @@ import (
 
 type Store interface {
 	UpsertRelationship(ctx context.Context, relationship models.Relationship) error
+	FindRelationshipByID(ctx context.Context, id string) (models.Relationship, error)
 	ListRelationshipsForUser(ctx context.Context, userID, role string) ([]models.Relationship, error)
 	FindUserByEmail(ctx context.Context, email string) (models.User, error)
 	FindUserByID(ctx context.Context, id string) (models.User, error)
@@ -220,18 +221,51 @@ func (s Service) AssignCaregiver(ctx context.Context, patientID, caregiverID str
 	return relationship, nil
 }
 
-func (s Service) RevokeCaregiver(ctx context.Context, patientID, caregiverID string) (models.Relationship, error) {
-	patientID = strings.TrimSpace(patientID)
-	caregiverID = strings.TrimSpace(caregiverID)
-	if patientID == "" || caregiverID == "" {
-		return models.Relationship{}, errors.New("patient_id and caregiver_id are required")
+func (s Service) RevokeCaregiver(ctx context.Context, callerID, targetID string) (models.Relationship, error) {
+	callerID = strings.TrimSpace(callerID)
+	targetID = strings.TrimSpace(targetID)
+	if callerID == "" || targetID == "" {
+		return models.Relationship{}, errors.New("identificadores requeridos para revocación")
 	}
-	if len(patientID) > 80 || len(caregiverID) > 80 {
-		return models.Relationship{}, errors.New("patient_id and caregiver_id must be <= 80 characters")
-	}
-	if patientID == caregiverID {
+	if callerID == targetID && !strings.HasPrefix(targetID, "rel_") {
 		return models.Relationship{}, errors.New("relationship requires different patient and caregiver users")
 	}
+	if len(callerID) > 80 || len(targetID) > 80 {
+		return models.Relationship{}, errors.New("patient_id and caregiver_id must be <= 80 characters")
+	}
+
+	patientID := callerID
+	caregiverID := targetID
+
+	// 1. If targetID is a relationship document ID (rel_...)
+	if strings.HasPrefix(targetID, "rel_") {
+		if rel, err := s.store.FindRelationshipByID(ctx, targetID); err == nil && rel.ID != "" {
+			patientID = rel.PatientID
+			caregiverID = rel.CaregiverID
+		}
+	} else if strings.Contains(targetID, "@") {
+		// 2. If targetID is an email
+		if u, err := s.store.FindUserByEmail(ctx, strings.ToLower(targetID)); err == nil && u.ID != "" {
+			targetID = u.ID
+			caregiverID = u.ID
+		}
+	}
+
+	// 3. Determine if caller is patient or caregiver
+	if caller, err := s.store.FindUserByID(ctx, callerID); err == nil && caller.ID != "" {
+		if caller.Role == models.RoleCaregiver {
+			caregiverID = caller.ID
+			if !strings.HasPrefix(targetID, "rel_") {
+				patientID = targetID
+			}
+		} else if caller.Role == models.RolePatient {
+			patientID = caller.ID
+			if !strings.HasPrefix(targetID, "rel_") {
+				caregiverID = targetID
+			}
+		}
+	}
+
 	now := time.Now().UTC()
 	relationship := models.Relationship{
 		ID:          "rel_" + uuid.NewString(),
@@ -241,16 +275,19 @@ func (s Service) RevokeCaregiver(ctx context.Context, patientID, caregiverID str
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+
 	if err := s.store.UpsertRelationship(ctx, relationship); err != nil {
 		return models.Relationship{}, err
 	}
 
-	// Revoke consent
+	// Revoke all consent scopes completely
 	consent := models.Consent{
+		ID:          "con_" + uuid.NewString(),
 		PatientID:   patientID,
 		CaregiverID: caregiverID,
 		Scopes:      []string{},
 		Revoked:     true,
+		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
 	_ = s.store.UpsertConsent(ctx, consent)

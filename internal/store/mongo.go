@@ -401,12 +401,21 @@ func (m *Mongo) HasActiveRelationship(ctx context.Context, caregiverID, patientI
 }
 
 func (m *Mongo) UpsertRelationship(ctx context.Context, relationship models.Relationship) error {
+	filter := bson.M{
+		"caregiver_id": relationship.CaregiverID,
+		"patient_id":   relationship.PatientID,
+	}
+	if relationship.ID != "" && strings.HasPrefix(relationship.ID, "rel_") {
+		filter = bson.M{
+			"$or": []bson.M{
+				{"_id": relationship.ID},
+				{"caregiver_id": relationship.CaregiverID, "patient_id": relationship.PatientID},
+			},
+		}
+	}
 	_, err := m.db.Collection("relationships").UpdateOne(
 		ctx,
-		bson.M{
-			"caregiver_id": relationship.CaregiverID,
-			"patient_id":   relationship.PatientID,
-		},
+		filter,
 		bson.M{
 			"$set": bson.M{
 				"status":     relationship.Status,
@@ -422,6 +431,12 @@ func (m *Mongo) UpsertRelationship(ctx context.Context, relationship models.Rela
 		options.Update().SetUpsert(true),
 	)
 	return err
+}
+
+func (m *Mongo) FindRelationshipByID(ctx context.Context, id string) (models.Relationship, error) {
+	var rel models.Relationship
+	err := m.db.Collection("relationships").FindOne(ctx, bson.M{"_id": id}).Decode(&rel)
+	return rel, normalizeFindErr(err)
 }
 
 func (m *Mongo) ListRelationshipsForUser(ctx context.Context, userID, role string) ([]models.Relationship, error) {

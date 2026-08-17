@@ -27,6 +27,13 @@ func (f *fakeStore) UpsertRelationship(ctx context.Context, relationship models.
 	return nil
 }
 
+func (f *fakeStore) FindRelationshipByID(ctx context.Context, id string) (models.Relationship, error) {
+	if f.err != nil {
+		return models.Relationship{}, f.err
+	}
+	return f.relationship, nil
+}
+
 func (f *fakeStore) ListRelationshipsForUser(ctx context.Context, userID, role string) ([]models.Relationship, error) {
 	if f.err != nil {
 		return nil, f.err
