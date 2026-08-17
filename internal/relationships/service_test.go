@@ -48,6 +48,41 @@ func (f *fakeStore) FindUserByID(ctx context.Context, id string) (models.User, e
 	return models.User{ID: id}, nil
 }
 
+func (f *fakeStore) CreateLinkingCode(ctx context.Context, code models.LinkingCode) error {
+	if f.err != nil {
+		return f.err
+	}
+	return nil
+}
+
+func (f *fakeStore) FindActiveLinkingCode(ctx context.Context, code string) (models.LinkingCode, error) {
+	if f.err != nil {
+		return models.LinkingCode{}, f.err
+	}
+	return models.LinkingCode{Code: code, CreatorID: "usr_creator", CreatorRole: "patient", Status: "pending"}, nil
+}
+
+func (f *fakeStore) FindActiveLinkingCodeForUser(ctx context.Context, userID string) (models.LinkingCode, error) {
+	if f.err != nil {
+		return models.LinkingCode{}, f.err
+	}
+	return models.LinkingCode{Code: "7K9X2M", CreatorID: userID, Status: "pending"}, nil
+}
+
+func (f *fakeStore) ClaimLinkingCode(ctx context.Context, code, claimantID string) (models.LinkingCode, error) {
+	if f.err != nil {
+		return models.LinkingCode{}, f.err
+	}
+	return models.LinkingCode{Code: code, ClaimedBy: claimantID, Status: "claimed"}, nil
+}
+
+func (f *fakeStore) UpsertConsent(ctx context.Context, consent models.Consent) error {
+	if f.err != nil {
+		return f.err
+	}
+	return nil
+}
+
 func TestAssignCaregiver(t *testing.T) {
 	store := &fakeStore{}
 	relationship, err := New(store).AssignCaregiver(context.Background(), " usr_patient ", " usr_caregiver ")

@@ -451,6 +451,51 @@ func (m *Mongo) ListRelationshipsForUser(ctx context.Context, userID, role strin
 	return relationships, nil
 }
 
+func (m *Mongo) CreateLinkingCode(ctx context.Context, code models.LinkingCode) error {
+	_, err := m.db.Collection("linking_codes").InsertOne(ctx, code)
+	return err
+}
+
+func (m *Mongo) FindActiveLinkingCode(ctx context.Context, code string) (models.LinkingCode, error) {
+	var lk models.LinkingCode
+	err := m.db.Collection("linking_codes").FindOne(ctx, bson.M{
+		"code":       strings.ToUpper(strings.TrimSpace(code)),
+		"status":     "pending",
+		"expires_at": bson.M{"$gt": time.Now().UTC()},
+	}).Decode(&lk)
+	return lk, normalizeFindErr(err)
+}
+
+func (m *Mongo) FindActiveLinkingCodeForUser(ctx context.Context, userID string) (models.LinkingCode, error) {
+	var lk models.LinkingCode
+	err := m.db.Collection("linking_codes").FindOne(ctx, bson.M{
+		"creator_id": userID,
+		"status":     "pending",
+		"expires_at": bson.M{"$gt": time.Now().UTC()},
+	}, options.FindOne().SetSort(bson.D{{Key: "created_at", Value: -1}})).Decode(&lk)
+	return lk, normalizeFindErr(err)
+}
+
+func (m *Mongo) ClaimLinkingCode(ctx context.Context, code, claimantID string) (models.LinkingCode, error) {
+	var lk models.LinkingCode
+	err := m.db.Collection("linking_codes").FindOneAndUpdate(
+		ctx,
+		bson.M{
+			"code":       strings.ToUpper(strings.TrimSpace(code)),
+			"status":     "pending",
+			"expires_at": bson.M{"$gt": time.Now().UTC()},
+		},
+		bson.M{
+			"$set": bson.M{
+				"status":     "claimed",
+				"claimed_by": claimantID,
+			},
+		},
+		options.FindOneAndUpdate().SetReturnDocument(options.After),
+	).Decode(&lk)
+	return lk, normalizeFindErr(err)
+}
+
 func (m *Mongo) HasConsentScope(ctx context.Context, caregiverID, patientID, scope string) (bool, error) {
 	count, err := m.db.Collection("consents").CountDocuments(ctx, bson.M{
 		"caregiver_id": caregiverID,
@@ -458,6 +503,9 @@ func (m *Mongo) HasConsentScope(ctx context.Context, caregiverID, patientID, sco
 		"revoked":      false,
 		"scopes":       scope,
 	})
+	if err == nil && count > 0 {
+		return true, nil
+	}
 	return count > 0, err
 }
 

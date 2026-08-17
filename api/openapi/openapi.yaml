@@ -1392,6 +1392,72 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
+  /v1/relationships/linking-code/generate:
+    post:
+      tags: [RELATIONSHIPS]
+      summary: Generar un código PIN temporal de vinculación entre paciente y cuidador
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '201':
+          description: Código PIN generado exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  data: { type: object }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /v1/relationships/linking-code/active:
+    get:
+      tags: [RELATIONSHIPS]
+      summary: Consultar código PIN de vinculación activo del usuario
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Código activo o nulo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  data: { type: object }
+        '401': { $ref: '#/components/responses/Error' }
+  /v1/relationships/linking-code/claim:
+    post:
+      tags: [RELATIONSHIPS]
+      summary: Canjear y validar un código PIN de vinculación
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, example: "7K9X2M" }
+                scopes: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: Vinculación completada exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  data: { type: object }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
   /v1/relationships/{caregiver_id}:
     delete:
       tags: [RELATIONSHIPS]

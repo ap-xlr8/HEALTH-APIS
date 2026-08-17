@@ -521,7 +521,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /v1/relationships", protected(s.authz.Authorize(
 		"relationships",
 		models.ScopeWritePatient,
-		[]string{models.RolePatient},
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string {
 			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
 				return claims.UserID
@@ -530,10 +530,31 @@ func (s *Server) Routes() http.Handler {
 		},
 		http.HandlerFunc(s.relationships.AssignCaregiver),
 	)))
+	mux.Handle("POST /v1/relationships/linking-code/generate", protected(s.authz.Authorize(
+		"relationships",
+		models.ScopeWritePatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.relationships.GenerateLinkingCode),
+	)))
+	mux.Handle("GET /v1/relationships/linking-code/active", protected(s.authz.Authorize(
+		"relationships",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.relationships.GetActiveLinkingCode),
+	)))
+	mux.Handle("POST /v1/relationships/linking-code/claim", protected(s.authz.Authorize(
+		"relationships",
+		models.ScopeWritePatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.relationships.ClaimLinkingCode),
+	)))
 	mux.Handle("DELETE /v1/relationships/{caregiver_id}", protected(s.authz.Authorize(
 		"relationships",
 		models.ScopeWritePatient,
-		[]string{models.RolePatient},
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string {
 			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
 				return claims.UserID

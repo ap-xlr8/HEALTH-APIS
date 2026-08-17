@@ -10,6 +10,8 @@ const (
 	ScopeReadMeasurements  = "read:measurements"
 	ScopeReadPatient       = "read:patient"
 	ScopeReadAlerts        = "read:alerts"
+	ScopeReadClinical      = "read:clinical"
+	ScopeReadReports       = "read:reports"
 	ScopeWriteMeasurements = "write:measurements"
 	ScopeWriteClinical     = "write:clinical"
 	ScopeWriteMedications  = "write:medications"
@@ -158,22 +160,47 @@ type Alert struct {
 }
 
 type Relationship struct {
+	ID                string    `bson:"_id" json:"id"`
+	CaregiverID       string    `bson:"caregiver_id" json:"caregiver_id"`
+	PatientID         string    `bson:"patient_id" json:"patient_id"`
+	Status            string    `bson:"status" json:"status"`
+	CaregiverName     string    `bson:"caregiver_name,omitempty" json:"caregiver_name,omitempty"`
+	CaregiverEmail    string    `bson:"caregiver_email,omitempty" json:"caregiver_email,omitempty"`
+	CaregiverRole     string    `bson:"caregiver_role,omitempty" json:"caregiver_role,omitempty"`
+	CaregiverPhone    string    `bson:"caregiver_phone,omitempty" json:"caregiver_phone,omitempty"`
+	PatientName       string    `bson:"patient_name,omitempty" json:"patient_name,omitempty"`
+	PatientEmail      string    `bson:"patient_email,omitempty" json:"patient_email,omitempty"`
+	Age               int       `bson:"age,omitempty" json:"age,omitempty"`
+	Condition         string    `bson:"condition,omitempty" json:"condition,omitempty"`
+	ActiveConditions  []string  `bson:"active_conditions,omitempty" json:"active_conditions,omitempty"`
+	ActiveAlertsCount int       `bson:"active_alerts_count,omitempty" json:"active_alerts_count,omitempty"`
+	VitalsSummary     any       `bson:"vitals_summary,omitempty" json:"vitals_summary,omitempty"`
+	Location          any       `bson:"location,omitempty" json:"location,omitempty"`
+	Scopes            []string  `bson:"scopes,omitempty" json:"scopes,omitempty"`
+	CreatedAt         time.Time `bson:"created_at" json:"created_at"`
+	UpdatedAt         time.Time `bson:"updated_at" json:"updated_at"`
+}
+
+type LinkingCode struct {
 	ID          string    `bson:"_id" json:"id"`
-	CaregiverID string    `bson:"caregiver_id" json:"caregiver_id"`
-	PatientID   string    `bson:"patient_id" json:"patient_id"`
-	Status      string    `bson:"status" json:"status"`
+	Code        string    `bson:"code" json:"code"`
+	CreatorID   string    `bson:"creator_id" json:"creator_id"`
+	CreatorRole string    `bson:"creator_role" json:"creator_role"`
+	CreatorName string    `bson:"creator_name" json:"creator_name"`
+	Status      string    `bson:"status" json:"status"` // "pending", "claimed", "expired"
+	ClaimedBy   string    `bson:"claimed_by,omitempty" json:"claimed_by,omitempty"`
+	ExpiresAt   time.Time `bson:"expires_at" json:"expires_at"`
 	CreatedAt   time.Time `bson:"created_at" json:"created_at"`
-	UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`
 }
 
 type Consent struct {
-	ID          string    `bson:"_id"`
-	PatientID   string    `bson:"patient_id"`
-	CaregiverID string    `bson:"caregiver_id"`
-	Scopes      []string  `bson:"scopes"`
-	Revoked     bool      `bson:"revoked"`
-	CreatedAt   time.Time `bson:"created_at"`
-	UpdatedAt   time.Time `bson:"updated_at"`
+	ID          string    `bson:"_id" json:"id"`
+	PatientID   string    `bson:"patient_id" json:"patient_id"`
+	CaregiverID string    `bson:"caregiver_id" json:"caregiver_id"`
+	Scopes      []string  `bson:"scopes" json:"scopes"`
+	Revoked     bool      `bson:"revoked" json:"revoked"`
+	CreatedAt   time.Time `bson:"created_at" json:"created_at"`
+	UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`
 }
 
 type AuditLog struct {
