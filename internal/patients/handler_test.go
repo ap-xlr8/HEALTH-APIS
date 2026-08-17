@@ -31,6 +31,10 @@ func (f fakePatientStore) UpdateUserHealthProfile(ctx context.Context, userID st
 	return store.ErrNotFound
 }
 
+func (f fakePatientStore) ListMedications(ctx context.Context, patientID string) ([]models.Medication, error) {
+	return []models.Medication{}, nil
+}
+
 func TestGetPatient(t *testing.T) {
 	t.Parallel()
 	handler := New(fakePatientStore{user: models.User{ID: "usr_1", Role: models.RolePatient, FirstName: "Juan", LastName: "Perez", Age: 68}})

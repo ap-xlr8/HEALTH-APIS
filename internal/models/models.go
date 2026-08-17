@@ -43,6 +43,12 @@ type HealthProfile struct {
 	Address          string            `bson:"address,omitempty" json:"address,omitempty"`
 	EmergencyContact *EmergencyContact `bson:"emergency_contact,omitempty" json:"emergency_contact,omitempty"`
 	BaselineVitals   *BaselineVitals   `bson:"baseline_vitals,omitempty" json:"baseline_vitals,omitempty"`
+	BasalProfile     map[string]any    `bson:"basal_profile,omitempty" json:"basalProfile,omitempty"`
+	Allergies        []any             `bson:"allergies,omitempty" json:"allergies,omitempty"`
+	Pathological     map[string]any    `bson:"pathological,omitempty" json:"pathological,omitempty"`
+	Gynecological    map[string]any    `bson:"gynecological,omitempty" json:"gynecological,omitempty"`
+	FamilyHistory    []any             `bson:"family_history,omitempty" json:"familyHistory,omitempty"`
+	Lifestyle        map[string]any    `bson:"lifestyle,omitempty" json:"lifestyle,omitempty"`
 }
 
 type QuietHours struct {
