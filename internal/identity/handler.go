@@ -48,6 +48,7 @@ type Store interface {
 	WriteAudit(ctx context.Context, log models.AuditLog) error
 	GetUserPreferences(ctx context.Context, userID string) (models.UserPreferences, error)
 	UpdateUserPreferences(ctx context.Context, userID string, prefs models.UserPreferences) error
+	UpdateUserProfile(ctx context.Context, userID string, firstName, lastName, phone, birthDate, biologicalSex, gender string, age int) error
 	UpdateCaregiverProfile(ctx context.Context, userID string, profile models.CaregiverProfile) error
 }
 
@@ -816,31 +817,103 @@ func (h Handler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		Name          string `json:"name"`
+		FirstName     string `json:"first_name"`
+		LastName      string `json:"last_name"`
+		Phone         string `json:"phone"`
+		BirthDate     string `json:"birth_date"`
+		BiologicalSex string `json:"biological_sex"`
+		Gender        string `json:"gender"`
+		Age           int    `json:"age"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	firstName := req.FirstName
+	lastName := req.LastName
+	if firstName == "" && lastName == "" && strings.TrimSpace(req.Name) != "" {
+		parts := strings.SplitN(strings.TrimSpace(req.Name), " ", 2)
+		firstName = parts[0]
+		if len(parts) > 1 {
+			lastName = parts[1]
+		}
+	}
+	if err := h.store.UpdateUserProfile(r.Context(), claims.UserID, firstName, lastName, req.Phone, req.BirthDate, req.BiologicalSex, req.Gender, req.Age); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to update profile")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status":  "success",
+		"message": "profile updated successfully",
+	})
+}
+
 func (h Handler) UpdatePreferences(w http.ResponseWriter, r *http.Request) {
 	claims, ok := authz.ClaimsFromContext(r.Context())
 	if !ok || claims == nil {
 		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	var req models.UserPreferences
-	if err := httpx.DecodeJSON(r, &req); err != nil {
+	var rawMap map[string]any
+	if err := httpx.DecodeJSON(r, &rawMap); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	if req.Theme == "" {
-		req.Theme = "system"
+	prefs, _ := h.store.GetUserPreferences(r.Context(), claims.UserID)
+	if theme, ok := rawMap["theme"].(string); ok && theme != "" {
+		prefs.Theme = theme
 	}
-	if req.Language == "" {
-		req.Language = "es"
+	if lang, ok := rawMap["language"].(string); ok && lang != "" {
+		prefs.Language = lang
 	}
-	if err := h.store.UpdateUserPreferences(r.Context(), claims.UserID, req); err != nil {
+	if tz, ok := rawMap["timezone"].(string); ok && tz != "" {
+		prefs.Timezone = tz
+	}
+	if units, ok := rawMap["measurement_units"].(string); ok && units != "" {
+		prefs.MeasurementUnits = units
+	} else if units, ok := rawMap["measurementUnits"].(string); ok && units != "" {
+		prefs.MeasurementUnits = units
+	}
+	if notifs, ok := rawMap["notifications"].(map[string]any); ok {
+		prefs.Notifications = notifs
+	}
+	if channels, ok := rawMap["notification_channels"].([]any); ok {
+		chList := make([]string, 0, len(channels))
+		for _, c := range channels {
+			if s, ok := c.(string); ok {
+				chList = append(chList, s)
+			}
+		}
+		prefs.NotificationChannels = chList
+	}
+	if qh, ok := rawMap["quiet_hours"].(map[string]any); ok {
+		if enabled, ok := qh["enabled"].(bool); ok {
+			prefs.QuietHours.Enabled = enabled
+		}
+		if start, ok := qh["start"].(string); ok {
+			prefs.QuietHours.Start = start
+		}
+		if end, ok := qh["end"].(string); ok {
+			prefs.QuietHours.End = end
+		}
+	}
+
+	if err := h.store.UpdateUserPreferences(r.Context(), claims.UserID, prefs); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "failed to update preferences")
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "success",
 		"message": "preferences updated successfully",
-		"data":    req,
+		"data":    prefs,
 	})
 }
 

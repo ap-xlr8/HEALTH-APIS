@@ -246,6 +246,23 @@ func (f *fakeIdentityStore) UpdateCaregiverProfile(ctx context.Context, userID s
 	return store.ErrNotFound
 }
 
+func (f *fakeIdentityStore) UpdateUserProfile(ctx context.Context, userID string, firstName, lastName, phone, birthDate, biologicalSex, gender string, age int) error {
+	if u, ok := f.usersByID[userID]; ok {
+		if firstName != "" {
+			u.FirstName = firstName
+		}
+		if lastName != "" {
+			u.LastName = lastName
+		}
+		if age > 0 {
+			u.Age = age
+		}
+		f.usersByID[userID] = u
+		return nil
+	}
+	return store.ErrNotFound
+}
+
 func TestValidateRegister(t *testing.T) {
 	t.Parallel()
 	valid := registerRequest{

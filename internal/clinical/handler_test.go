@@ -38,6 +38,20 @@ func (f *fakeClinicalStore) ListClinicalRecords(ctx context.Context, patientID s
 	return f.records, nil
 }
 
+func (f *fakeClinicalStore) CreatePrescription(ctx context.Context, prescription models.Prescription) error {
+	if f.err != nil {
+		return f.err
+	}
+	return nil
+}
+
+func (f *fakeClinicalStore) ListPrescriptions(ctx context.Context, patientID string) ([]models.Prescription, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return []models.Prescription{}, nil
+}
+
 func (f *fakeClinicalStore) CreateMedication(ctx context.Context, medication models.Medication) error {
 	if f.err != nil {
 		return f.err

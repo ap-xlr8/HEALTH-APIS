@@ -575,6 +575,31 @@ func (m *Mongo) ListClinicalRecords(ctx context.Context, patientID string) ([]mo
 	return records, nil
 }
 
+func (m *Mongo) CreatePrescription(ctx context.Context, prescription models.Prescription) error {
+	_, err := m.db.Collection("prescriptions").InsertOne(ctx, prescription)
+	return err
+}
+
+func (m *Mongo) ListPrescriptions(ctx context.Context, patientID string) ([]models.Prescription, error) {
+	cursor, err := m.db.Collection("prescriptions").Find(
+		ctx,
+		bson.M{"patient_id": patientID},
+		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var prescriptions []models.Prescription
+	if err := cursor.All(ctx, &prescriptions); err != nil {
+		return nil, err
+	}
+	if prescriptions == nil {
+		prescriptions = []models.Prescription{}
+	}
+	return prescriptions, nil
+}
+
 func (m *Mongo) CreateMedication(ctx context.Context, medication models.Medication) error {
 	_, err := m.db.Collection("medications").InsertOne(ctx, medication)
 	return err
@@ -964,6 +989,36 @@ func (m *Mongo) UpdateUserPreferences(ctx context.Context, userID string, prefs 
 		},
 	}
 	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
+	return err
+}
+
+func (m *Mongo) UpdateUserProfile(ctx context.Context, userID string, firstName, lastName, phone, birthDate, biologicalSex, gender string, age int) error {
+	setFields := bson.M{}
+	if strings.TrimSpace(firstName) != "" {
+		setFields["first_name"] = strings.TrimSpace(firstName)
+	}
+	if strings.TrimSpace(lastName) != "" {
+		setFields["last_name"] = strings.TrimSpace(lastName)
+	}
+	if strings.TrimSpace(phone) != "" {
+		setFields["health_profile.phone"] = strings.TrimSpace(phone)
+	}
+	if strings.TrimSpace(birthDate) != "" {
+		setFields["health_profile.birth_date"] = strings.TrimSpace(birthDate)
+	}
+	if strings.TrimSpace(biologicalSex) != "" {
+		setFields["health_profile.biological_sex"] = strings.TrimSpace(biologicalSex)
+	}
+	if strings.TrimSpace(gender) != "" {
+		setFields["health_profile.gender"] = strings.TrimSpace(gender)
+	}
+	if age > 0 {
+		setFields["age"] = age
+	}
+	if len(setFields) == 0 {
+		return nil
+	}
+	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, bson.M{"$set": setFields})
 	return err
 }
 

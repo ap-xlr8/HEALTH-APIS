@@ -61,10 +61,13 @@ type QuietHours struct {
 }
 
 type UserPreferences struct {
-	Theme                string     `bson:"theme" json:"theme"`
-	Language             string     `bson:"language" json:"language"`
-	NotificationChannels []string   `bson:"notification_channels" json:"notification_channels"`
-	QuietHours           QuietHours `bson:"quiet_hours" json:"quiet_hours"`
+	Theme                string         `bson:"theme,omitempty" json:"theme,omitempty"`
+	Language             string         `bson:"language,omitempty" json:"language,omitempty"`
+	Timezone             string         `bson:"timezone,omitempty" json:"timezone,omitempty"`
+	MeasurementUnits     string         `bson:"measurement_units,omitempty" json:"measurementUnits,omitempty"`
+	NotificationChannels []string       `bson:"notification_channels,omitempty" json:"notification_channels,omitempty"`
+	Notifications        map[string]any `bson:"notifications,omitempty" json:"notifications,omitempty"`
+	QuietHours           QuietHours     `bson:"quiet_hours,omitempty" json:"quiet_hours,omitempty"`
 }
 
 type NotificationChannelPreference struct {
@@ -326,6 +329,29 @@ type MedicationLog struct {
 	Status       string    `bson:"status" json:"status"`
 	TakenAt      time.Time `bson:"taken_at" json:"taken_at"`
 	CreatedAt    time.Time `bson:"created_at" json:"created_at"`
+}
+
+type PrescriptionItem struct {
+	Name         string `bson:"name" json:"name"`
+	Dose         string `bson:"dose" json:"dose"`
+	Route        string `bson:"route,omitempty" json:"route,omitempty"`
+	Frequency    string `bson:"frequency" json:"frequency"`
+	Instructions string `bson:"instructions,omitempty" json:"instructions,omitempty"`
+	DurationDays int    `bson:"duration_days,omitempty" json:"duration_days,omitempty"`
+}
+
+type Prescription struct {
+	ID               string             `bson:"_id" json:"id"`
+	PatientID        string             `bson:"patient_id" json:"patient_id"`
+	ConsultationDate string             `bson:"consultation_date" json:"consultation_date"`
+	Diagnosis        string             `bson:"diagnosis" json:"diagnosis"`
+	DoctorName       string             `bson:"doctor_name" json:"doctor_name"`
+	Institution      string             `bson:"institution,omitempty" json:"institution,omitempty"`
+	Notes            string             `bson:"notes,omitempty" json:"notes,omitempty"`
+	Medications      []PrescriptionItem `bson:"medications,omitempty" json:"medications,omitempty"`
+	CreatedBy        string             `bson:"created_by" json:"created_by"`
+	CreatedAt        time.Time          `bson:"created_at" json:"created_at"`
+	UpdatedAt        time.Time          `bson:"updated_at" json:"updated_at"`
 }
 
 type Device struct {

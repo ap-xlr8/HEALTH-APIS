@@ -241,8 +241,12 @@ func (h Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetUserID := claims.UserID
-	if pathID := r.PathValue("id"); pathID != "" && pathID != "me" && claims.Role == models.RoleAdmin {
-		targetUserID = pathID
+	if pathID := r.PathValue("id"); pathID != "" && pathID != "me" {
+		if claims.Role == models.RoleAdmin || claims.Role == models.RoleCaregiver {
+			targetUserID = pathID
+		} else if claims.Role == models.RolePatient {
+			targetUserID = claims.UserID
+		}
 	}
 
 	var rawMap map[string]any
@@ -351,7 +355,70 @@ func (h Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Allergies
 	if algs, ok := rawMap["allergies"].([]any); ok {
-		profile.Allergies = algs
+		normalizedAllergies := make([]any, 0, len(algs))
+		for _, rawAlg := range algs {
+			if algMap, ok := rawAlg.(map[string]any); ok {
+				allergen := algMap["allergen"]
+				if allergen == nil || allergen == "" {
+					allergen = algMap["name"]
+				}
+				if allergen == nil || allergen == "" {
+					allergen = algMap["substance"]
+				}
+				category := algMap["category"]
+				if category == nil || category == "" {
+					category = algMap["type"]
+				}
+				if category == nil || category == "" {
+					category = "drug"
+				}
+				severity := algMap["severity"]
+				if severity == nil || severity == "" {
+					severity = "moderate"
+				}
+				manifestations := algMap["clinicalManifestations"]
+				if manifestations == nil {
+					manifestations = algMap["clinical_manifestations"]
+				}
+				if manifestations == nil {
+					manifestations = algMap["manifestations"]
+				}
+				if manifestations == nil {
+					manifestations = algMap["reaction"]
+				}
+				diagDate := algMap["diagnosedDate"]
+				if diagDate == nil {
+					diagDate = algMap["diagnosed_date"]
+				}
+				if diagDate == nil {
+					diagDate = algMap["reportedDate"]
+				}
+				if diagDate == nil {
+					diagDate = algMap["reported_date"]
+				}
+				notes := algMap["notes"]
+				idVal := algMap["id"]
+				if idVal == nil {
+					idVal = algMap["_id"]
+				}
+
+				normalized := map[string]any{
+					"id":                      idVal,
+					"allergen":                allergen,
+					"category":                category,
+					"severity":                severity,
+					"clinicalManifestations":  manifestations,
+					"clinical_manifestations": manifestations,
+					"diagnosedDate":           diagDate,
+					"diagnosed_date":          diagDate,
+					"notes":                   notes,
+				}
+				normalizedAllergies = append(normalizedAllergies, normalized)
+			} else {
+				normalizedAllergies = append(normalizedAllergies, rawAlg)
+			}
+		}
+		profile.Allergies = normalizedAllergies
 	}
 
 	// 3. Pathological History

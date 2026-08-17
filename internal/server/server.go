@@ -314,6 +314,13 @@ func (s *Server) Routes() http.Handler {
 		func(r *http.Request) string { return "" },
 		http.HandlerFunc(s.identity.Me),
 	)))
+	mux.Handle("PUT /v1/profile/me", protected(s.authz.Authorize(
+		"profile",
+		models.ScopeWritePatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return "" },
+		http.HandlerFunc(s.identity.UpdateProfile),
+	)))
 	mux.Handle("GET /v1/profile/me/preferences", protected(s.authz.Authorize(
 		"profile",
 		models.ScopeReadPatient,
@@ -465,6 +472,20 @@ func (s *Server) Routes() http.Handler {
 		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string { return r.PathValue("id") },
 		http.HandlerFunc(s.clinical.RecordMedicationLog),
+	)))
+	mux.Handle("POST /v1/patients/{id}/prescriptions", protected(s.authz.Authorize(
+		"clinical_records",
+		models.ScopeWriteClinical,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.clinical.CreatePrescription),
+	)))
+	mux.Handle("GET /v1/patients/{id}/prescriptions", protected(s.authz.Authorize(
+		"clinical_records",
+		models.ScopeReadPatient,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.clinical.ListPrescriptions),
 	)))
 	mux.Handle("POST /v1/patients/{id}/reports", protected(s.authz.Authorize(
 		"reports",

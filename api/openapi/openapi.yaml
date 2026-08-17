@@ -671,6 +671,39 @@ paths:
                   created_at: { type: string, format: date-time }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [PROFILE]
+      summary: Actualizar datos personales y perfil del usuario autenticado
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                first_name: { type: string }
+                last_name: { type: string }
+                phone: { type: string }
+                birth_date: { type: string }
+                biological_sex: { type: string }
+                gender: { type: string }
+                age: { type: integer }
+      responses:
+        '200':
+          description: Perfil actualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  message: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
   /v1/profile/me/preferences:
     get:
       tags: [PROFILE]
@@ -1204,6 +1237,76 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MedicationLogResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/prescriptions:
+    get:
+      tags: [CLINICAL]
+      summary: Listar recetas medicas y consultas registradas
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+      responses:
+        '200':
+          description: Lista de recetas medicas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  data:
+                    type: array
+                    items: { type: object }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [CLINICAL]
+      summary: Registrar receta medica rapida con alta automatica de farmacos vinculados
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [diagnosis]
+              properties:
+                consultation_date: { type: string, example: "2026-08-16" }
+                diagnosis: { type: string, example: "Faringoamigdalitis aguda" }
+                doctor_name: { type: string, example: "Dra. Carmen Soto" }
+                institution: { type: string, example: "Hospital Central" }
+                notes: { type: string }
+                medications:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, dose, frequency]
+                    properties:
+                      name: { type: string }
+                      dose: { type: string }
+                      route: { type: string }
+                      frequency: { type: string }
+                      instructions: { type: string }
+                      duration_days: { type: integer }
+      responses:
+        '201':
+          description: Receta medica registrada y farmacos dados de alta
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  message: { type: string }
+                  data: { type: object }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }

@@ -14,6 +14,8 @@ import (
 type Store interface {
 	CreateClinicalRecord(ctx context.Context, record models.ClinicalRecord) error
 	ListClinicalRecords(ctx context.Context, patientID string) ([]models.ClinicalRecord, error)
+	CreatePrescription(ctx context.Context, prescription models.Prescription) error
+	ListPrescriptions(ctx context.Context, patientID string) ([]models.Prescription, error)
 	CreateMedication(ctx context.Context, medication models.Medication) error
 	UpdateMedicationStatus(ctx context.Context, patientID, medicationID, status string, active bool) error
 	DeleteMedication(ctx context.Context, patientID, medicationID string) error
@@ -311,4 +313,147 @@ func (h Handler) RecordMedicationLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"status": "success", "data": log})
+}
+
+func (h Handler) CreatePrescription(w http.ResponseWriter, r *http.Request) {
+	patientID := r.PathValue("id")
+	if patientID == "" || patientID == "me" {
+		if claims, ok := authz.ClaimsFromContext(r.Context()); ok && claims != nil {
+			patientID = claims.UserID
+		}
+	}
+	if patientID == "" || len(patientID) > 80 {
+		httpx.WriteError(w, http.StatusBadRequest, "patient id is required")
+		return
+	}
+
+	var req struct {
+		ConsultationDate string                    `json:"consultation_date"`
+		Diagnosis        string                    `json:"diagnosis"`
+		DoctorName       string                    `json:"doctor_name"`
+		Institution      string                    `json:"institution"`
+		Notes            string                    `json:"notes"`
+		Medications      []models.PrescriptionItem `json:"medications"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+
+	diagnosis := strings.TrimSpace(req.Diagnosis)
+	if diagnosis == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "diagnosis is required")
+		return
+	}
+	doctorName := strings.TrimSpace(req.DoctorName)
+	if doctorName == "" {
+		doctorName = "Médico tratante"
+	}
+	consultationDate := strings.TrimSpace(req.ConsultationDate)
+	if consultationDate == "" {
+		consultationDate = time.Now().UTC().Format("2006-01-02")
+	}
+
+	claims, _ := authz.ClaimsFromContext(r.Context())
+	creatorID := patientID
+	if claims != nil && claims.UserID != "" {
+		creatorID = claims.UserID
+	}
+
+	now := time.Now().UTC()
+	prescID := "rx_" + randomID()
+	if prescID == "rx_" {
+		prescID = "rx_" + time.Now().Format("20060102150405")
+	}
+
+	prescription := models.Prescription{
+		ID:               prescID,
+		PatientID:        patientID,
+		ConsultationDate: consultationDate,
+		Diagnosis:        diagnosis,
+		DoctorName:       doctorName,
+		Institution:      strings.TrimSpace(req.Institution),
+		Notes:            strings.TrimSpace(req.Notes),
+		Medications:      req.Medications,
+		CreatedBy:        creatorID,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	if err := h.store.CreatePrescription(r.Context(), prescription); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to save prescription")
+		return
+	}
+
+	// Automatically insert each linked medication into medications collection
+	for _, medItem := range req.Medications {
+		name := strings.TrimSpace(medItem.Name)
+		if name == "" {
+			continue
+		}
+		dose := strings.TrimSpace(medItem.Dose)
+		if dose == "" {
+			dose = "1 dosis"
+		}
+		freq := strings.TrimSpace(medItem.Frequency)
+		if freq == "" {
+			freq = "Según indicación médica"
+		}
+		medID := "med_" + randomID()
+		if medID == "med_" {
+			medID = "med_" + time.Now().Format("20060102150405")
+		}
+
+		med := models.Medication{
+			ID:               medID,
+			PatientID:        patientID,
+			Name:             name,
+			Dosage:           dose,
+			Schedule:         freq,
+			Route:            strings.TrimSpace(medItem.Route),
+			FrequencyDetails: freq,
+			Instructions:     strings.TrimSpace(medItem.Instructions),
+			PrescribedBy:     doctorName,
+			StartDate:        consultationDate,
+			DurationDays:     medItem.DurationDays,
+			Status:           "active",
+			Active:           true,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}
+		_ = h.store.CreateMedication(r.Context(), med)
+	}
+
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		"status":  "success",
+		"message": "prescription and linked medications registered successfully",
+		"data":    prescription,
+	})
+}
+
+func (h Handler) ListPrescriptions(w http.ResponseWriter, r *http.Request) {
+	patientID := r.PathValue("id")
+	if patientID == "" || patientID == "me" {
+		if claims, ok := authz.ClaimsFromContext(r.Context()); ok && claims != nil {
+			patientID = claims.UserID
+		}
+	}
+	if patientID == "" || len(patientID) > 80 {
+		httpx.WriteError(w, http.StatusBadRequest, "patient id is required")
+		return
+	}
+
+	prescriptions, err := h.store.ListPrescriptions(r.Context(), patientID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to list prescriptions")
+		return
+	}
+	if prescriptions == nil {
+		prescriptions = []models.Prescription{}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status": "success",
+		"data":   prescriptions,
+	})
 }
