@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -85,19 +86,7 @@ func (h Handler) GetMySubscription(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	now := time.Now().UTC()
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"id":         "sub_" + claims.UserID,
-		"user_id":    claims.UserID,
-		"plan":       "Plan Premium Clínico",
-		"planName":   "Plan Premium Clínico",
-		"status":     "active",
-		"price":      "$29.00 USD/mes",
-		"currency":   "USD",
-		"interval":   "month",
-		"renewsAt":   now.AddDate(0, 1, 0).Format("2006-01-02"),
-		"created_at": now,
-	})
+	httpx.WriteError(w, http.StatusNotFound, "no subscription found for user")
 }
 
 func (h Handler) GetMyInvoices(w http.ResponseWriter, r *http.Request) {
@@ -106,71 +95,19 @@ func (h Handler) GetMyInvoices(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	now := time.Now().UTC()
-	httpx.WriteJSON(w, http.StatusOK, []map[string]any{
-		{
-			"id":         "inv_001",
-			"invoice_id": "INV-2026-001",
-			"date":       now.AddDate(0, -1, 0).Format("2006-01-02"),
-			"amount":     "$29.00 USD",
-			"status":     "Pagada",
-		},
-		{
-			"id":         "inv_002",
-			"invoice_id": "INV-2026-002",
-			"date":       now.Format("2006-01-02"),
-			"amount":     "$29.00 USD",
-			"status":     "Pagada",
-		},
-	})
+	httpx.WriteJSON(w, http.StatusOK, []map[string]any{})
 }
 
 func (h Handler) GetPublicPlans(w http.ResponseWriter, r *http.Request) {
-	plans := []map[string]any{
-		{
-			"id":          "plan_basic",
-			"name":        "Plan Esencial",
-			"price":       "$0",
-			"period":      "Gratis",
-			"description": "Monitoreo biométrico básico para uso personal continuo.",
-			"features": []string{
-				"Sincronización de 1 wearable",
-				"Historial clínico básico",
-				"Alertas vitales inmediatas",
-			},
-			"buttonText": "Comenzar Gratis",
-			"highlight":  false,
-		},
-		{
-			"id":          "plan_pro",
-			"name":        "Plan Premium Clínico",
-			"price":       "$29",
-			"period":      "USD / mes",
-			"description": "Monitoreo avanzado con análisis predictivo ML y enlace a cuidadores.",
-			"features": []string{
-				"Wearables ilimitados",
-				"Modelos predictivos de arritmia y apnea",
-				"Acceso multi-cuidador y reportes PDF",
-				"Soporte prioritario 24/7",
-			},
-			"buttonText": "Comenzar Prueba de 14 Días",
-			"highlight":  true,
-		},
-		{
-			"id":          "plan_enterprise",
-			"name":        "Plan Institucional",
-			"price":       "Contactar",
-			"period":      "A medida",
-			"description": "Para hospitales, aseguradoras y redes de atención médica.",
-			"features": []string{
-				"Integración HL7 / FHIR directa",
-				"Portal de telemetría masiva",
-				"SLA del 99.99% y soporte dedicado",
-				"Despliegue On-Premise o Cloud dedicado",
-			},
-			"buttonText": "Hablar con Ventas",
-			"highlight":  false,
-		},
+	var plans []map[string]any
+	if raw := strings.TrimSpace(os.Getenv("PUBLIC_PLANS_JSON")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &plans); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "invalid public plans configuration")
+			return
+		}
+	}
+	if plans == nil {
+		plans = []map[string]any{}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"status": "success",

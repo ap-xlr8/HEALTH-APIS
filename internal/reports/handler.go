@@ -48,11 +48,8 @@ func (h Handler) Create(w http.ResponseWriter, r *http.Request) {
 	url := strings.TrimSpace(req.URL)
 	patientID := r.PathValue("id")
 	if url == "" {
-		slug := strings.ToLower(strings.ReplaceAll(req.Title, " ", "_"))
-		if slug == "" {
-			slug = "clinical_summary"
-		}
-		url = "s3://healthos-clinical-reports/" + patientID + "/report_" + slug + ".pdf"
+		httpx.WriteError(w, http.StatusBadRequest, "url is required until report storage is configured")
+		return
 	} else if !strings.HasPrefix(url, "s3://") || len(url) > 500 {
 		httpx.WriteError(w, http.StatusBadRequest, "url must be an s3:// PDF report reference")
 		return
@@ -91,13 +88,7 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) Download(w http.ResponseWriter, r *http.Request) {
-	reportID := r.PathValue("report_id")
-	patientID := r.PathValue("id")
-	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"report_"+patientID+"_"+reportID+".pdf\"")
-	pdfData := "%PDF-1.4\n1 0 obj\n<< /Title (HealthOS Clinical Report) /Author (HealthOS) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(pdfData))
+	httpx.WriteError(w, http.StatusNotImplemented, "report downloads require the configured report storage provider")
 }
 
 func randomID() string {

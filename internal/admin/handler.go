@@ -59,7 +59,10 @@ func (h Handler) SuspendUser(w http.ResponseWriter, r *http.Request) {
 		Status string `json:"status"`
 		Reason string `json:"reason"`
 	}
-	_ = httpx.DecodeJSON(r, &req)
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
 
 	newStatus := "suspended"
 	if req.Status == "active" || req.Status == "suspended" {

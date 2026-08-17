@@ -145,6 +145,11 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 	if patientID == "" {
 		patientID = r.URL.Query().Get("patient_id")
 	}
+	if claims, ok := authz.ClaimsFromContext(r.Context()); ok && claims != nil {
+		if claims.Role == models.RolePatient || patientID == "" {
+			patientID = claims.UserID
+		}
+	}
 	alerts, err := h.store.ListAlerts(r.Context(), patientID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "failed to list alerts")

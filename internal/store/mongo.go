@@ -752,8 +752,14 @@ func (m *Mongo) SetUserTwoFactorCode(ctx context.Context, userID, code string, e
 			"two_factor_expires_at": expiresAt,
 		},
 	}
-	_, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
-	return err
+	result, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, update)
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (m *Mongo) VerifyUserTwoFactorCode(ctx context.Context, email, code string) (models.User, error) {

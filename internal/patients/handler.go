@@ -99,7 +99,11 @@ func (h Handler) GetHealthProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meds, _ := h.store.ListMedications(r.Context(), id)
+	meds, err := h.store.ListMedications(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "medications lookup failed")
+		return
+	}
 	if meds == nil {
 		meds = make([]models.Medication, 0)
 	}
@@ -264,7 +268,15 @@ func (h Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch existing profile to merge partially updated sections
-	existingUser, _ := h.store.FindUserByID(r.Context(), targetUserID)
+	existingUser, err := h.store.FindUserByID(r.Context(), targetUserID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "patient not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "patient lookup failed")
+		return
+	}
 	var profile models.HealthProfile
 	if existingUser.HealthProfile != nil {
 		profile = *existingUser.HealthProfile

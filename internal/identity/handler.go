@@ -892,14 +892,26 @@ func (h Handler) GetCaregiverSettings(w http.ResponseWriter, r *http.Request) {
 
 	title := "Dr(a). " + user.FirstName + " " + user.LastName
 	license := ""
-	specialty := "Medicina General"
-	institution := "Red Health OS"
+	specialty := ""
+	institution := ""
+	shifts := map[string]any{}
+	channels := map[string]any{}
 	if user.CaregiverProfile != nil {
+		if user.CaregiverProfile.ProfessionalTitle != "" {
+			title = user.CaregiverProfile.ProfessionalTitle
+		}
+		license = user.CaregiverProfile.LicenseNumber
 		if user.CaregiverProfile.Specialty != "" {
 			specialty = user.CaregiverProfile.Specialty
 		}
 		if user.CaregiverProfile.Organization != "" {
 			institution = user.CaregiverProfile.Organization
+		}
+		if user.CaregiverProfile.Shifts != nil {
+			shifts = user.CaregiverProfile.Shifts
+		}
+		if user.CaregiverProfile.NotificationChannels != nil {
+			channels = user.CaregiverProfile.NotificationChannels
 		}
 	}
 
@@ -910,17 +922,8 @@ func (h Handler) GetCaregiverSettings(w http.ResponseWriter, r *http.Request) {
 		"licenseNumber":     license,
 		"specialty":         specialty,
 		"institution":       institution,
-		"shifts": map[string]any{
-			"onCall":                 true,
-			"shiftSchedule":          "Lunes a Viernes 08:00 - 16:00 (Guardia Pasiva)",
-			"autoTriageCriticalOnly": false,
-		},
-		"notificationChannels": map[string]any{
-			"push":       true,
-			"email":      true,
-			"sms":        true,
-			"urgentCall": true,
-		},
+		"shifts":              shifts,
+		"notificationChannels": channels,
 		"assignedPatientIds": []string{},
 	})
 }
@@ -944,7 +947,11 @@ func (h Handler) UpdateCaregiverSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	user, _ := h.store.FindUserByID(r.Context(), claims.UserID)
+	user, err := h.store.FindUserByID(r.Context(), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "user not found")
+		return
+	}
 	profile := models.CaregiverProfile{}
 	if user.CaregiverProfile != nil {
 		profile = *user.CaregiverProfile
@@ -955,7 +962,14 @@ func (h Handler) UpdateCaregiverSettings(w http.ResponseWriter, r *http.Request)
 	if req.Institution != "" {
 		profile.Organization = req.Institution
 	}
-	_ = h.store.UpdateCaregiverProfile(r.Context(), claims.UserID, profile)
+	profile.ProfessionalTitle = strings.TrimSpace(req.ProfessionalTitle)
+	profile.LicenseNumber = strings.TrimSpace(req.LicenseNumber)
+	profile.Shifts = req.Shifts
+	profile.NotificationChannels = req.NotificationChannels
+	if err := h.store.UpdateCaregiverProfile(r.Context(), claims.UserID, profile); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to update caregiver settings")
+		return
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "success",

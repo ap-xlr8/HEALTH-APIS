@@ -103,6 +103,14 @@ func (h Handler) GetBiometricEstimations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if len(measurements) == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status": "success",
+			"data":   nil,
+		})
+		return
+	}
+
 	estimations := h.engine.ComputeBiometricEstimations(patientID, user.HealthProfile, measurements)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

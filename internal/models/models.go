@@ -76,10 +76,14 @@ type NotificationPreferences struct {
 }
 
 type CaregiverProfile struct {
+	ProfessionalTitle string            `bson:"professional_title,omitempty" json:"professional_title,omitempty"`
+	LicenseNumber     string            `bson:"license_number,omitempty" json:"license_number,omitempty"`
 	Phone            string            `bson:"phone,omitempty" json:"phone,omitempty"`
 	Specialty        string            `bson:"specialty,omitempty" json:"specialty,omitempty"`
 	Organization     string            `bson:"organization,omitempty" json:"organization,omitempty"`
 	Bio              string            `bson:"bio,omitempty" json:"bio,omitempty"`
+	Shifts           map[string]any    `bson:"shifts,omitempty" json:"shifts,omitempty"`
+	NotificationChannels map[string]any `bson:"notification_channels,omitempty" json:"notification_channels,omitempty"`
 	EmergencyContact *EmergencyContact `bson:"emergency_contact,omitempty" json:"emergency_contact,omitempty"`
 }
 
@@ -431,4 +435,3 @@ type HypertensionArterialStiffnessEstimate struct {
 	HypertensionRiskIndex     float64 `json:"hypertensionRiskIndex"`
 	VascularAgeEstimateYears  int     `json:"vascularAgeEstimateYears"`
 }
-
