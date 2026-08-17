@@ -57,7 +57,10 @@ func (h Handler) TriggerSOS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req triggerSosRequest
-	_ = httpx.DecodeJSON(r, &req)
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
 	if req.Trigger == "" {
 		req.Trigger = "MANUAL_BUTTON"
 	}

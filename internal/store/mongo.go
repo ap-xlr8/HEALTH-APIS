@@ -517,6 +517,14 @@ func (m *Mongo) CreateMedication(ctx context.Context, medication models.Medicati
 	return err
 }
 
+func (m *Mongo) UpdateMedicationStatus(ctx context.Context, patientID, medicationID, status string, active bool) error {
+	_, err := m.db.Collection("medications").UpdateOne(ctx,
+		bson.M{"_id": medicationID, "patient_id": patientID},
+		bson.M{"$set": bson.M{"status": status, "active": active, "updated_at": time.Now().UTC()}},
+	)
+	return err
+}
+
 func (m *Mongo) DeleteMedication(ctx context.Context, patientID, medicationID string) error {
 	_, err := m.db.Collection("medications").DeleteOne(ctx, bson.M{"_id": medicationID, "patient_id": patientID})
 	return err

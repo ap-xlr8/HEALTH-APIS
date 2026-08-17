@@ -1148,6 +1148,40 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [CLINICAL]
+      summary: Actualizar estado o vigencia de medicamento
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+        - name: med_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, example: completed }
+                active: { type: boolean, example: false }
+      responses:
+        '200':
+          description: Estado de medicamento actualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /v1/patients/{id}/medication-logs:
     post:
       tags: [CLINICAL]

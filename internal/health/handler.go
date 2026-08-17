@@ -76,7 +76,11 @@ func (h Handler) SyncMeasurements(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "measurement sync failed")
 		return
 	}
-	alertsTriggered := h.processAlertsAndBroadcasts(r.Context(), measurements)
+	alertsTriggered, alertErr := h.processAlertsAndBroadcasts(r.Context(), measurements)
+	if alertErr != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "alert persistence failed")
+		return
+	}
 
 	// ML Risk and Anomaly Evaluation
 	var mlRiskResult *ml.RiskResult
@@ -91,6 +95,8 @@ func (h Handler) SyncMeasurements(w http.ResponseWriter, r *http.Request) {
 	}
 	if mlRiskResult != nil {
 		responsePayload["ml_risk"] = mlRiskResult
+	} else {
+		responsePayload["ml_risk_status"] = "unavailable"
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, responsePayload)
@@ -121,7 +127,11 @@ func (h Handler) SyncCriticalMeasurements(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, http.StatusInternalServerError, "critical measurement sync failed")
 		return
 	}
-	alertsTriggered := h.processAlertsAndBroadcasts(r.Context(), measurements)
+	alertsTriggered, alertErr := h.processAlertsAndBroadcasts(r.Context(), measurements)
+	if alertErr != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "alert persistence failed")
+		return
+	}
 
 	// Instant high-priority evaluation
 	var mlRiskResult *ml.RiskResult
@@ -137,12 +147,14 @@ func (h Handler) SyncCriticalMeasurements(w http.ResponseWriter, r *http.Request
 	}
 	if mlRiskResult != nil {
 		responsePayload["ml_risk"] = mlRiskResult
+	} else {
+		responsePayload["ml_risk_status"] = "unavailable"
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, responsePayload)
 }
 
-func (h Handler) processAlertsAndBroadcasts(ctx context.Context, measurements []models.Measurement) []string {
+func (h Handler) processAlertsAndBroadcasts(ctx context.Context, measurements []models.Measurement) ([]string, error) {
 	alertsTriggered := make([]string, 0)
 	for _, measurement := range measurements {
 		h.broadcast(map[string]any{
@@ -155,8 +167,12 @@ func (h Handler) processAlertsAndBroadcasts(ctx context.Context, measurements []
 			"eventId":    "evt_" + uuid.NewString(),
 		})
 		if alert, ok := deriveAlert(measurement); ok {
-			if err := h.store.CreateAlert(ctx, alert); err == nil {
-				h.createAlertNotification(ctx, alert, measurement)
+			if err := h.store.CreateAlert(ctx, alert); err != nil {
+				return alertsTriggered, err
+			} else {
+				if err := h.createAlertNotification(ctx, alert, measurement); err != nil {
+					return alertsTriggered, err
+				}
 				alertsTriggered = append(alertsTriggered, alert.ID)
 				h.broadcast(map[string]any{
 					"type":        "alert.created",
@@ -177,11 +193,11 @@ func (h Handler) processAlertsAndBroadcasts(ctx context.Context, measurements []
 			}
 		}
 	}
-	return alertsTriggered
+	return alertsTriggered, nil
 }
 
-func (h Handler) createAlertNotification(ctx context.Context, alert models.Alert, measurement models.Measurement) {
-	_ = h.store.CreateNotification(ctx, models.Notification{
+func (h Handler) createAlertNotification(ctx context.Context, alert models.Alert, measurement models.Measurement) error {
+	return h.store.CreateNotification(ctx, models.Notification{
 		ID:      "not_" + uuid.NewString(),
 		UserID:  alert.PatientID,
 		Channel: "push",

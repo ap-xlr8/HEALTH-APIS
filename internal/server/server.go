@@ -452,6 +452,13 @@ func (s *Server) Routes() http.Handler {
 		func(r *http.Request) string { return r.PathValue("id") },
 		http.HandlerFunc(s.clinical.DeleteMedication),
 	)))
+	mux.Handle("PATCH /v1/patients/{id}/medications/{med_id}", protected(s.authz.Authorize(
+		"medications",
+		models.ScopeWriteMedications,
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
+		func(r *http.Request) string { return r.PathValue("id") },
+		http.HandlerFunc(s.clinical.UpdateMedicationStatus),
+	)))
 	mux.Handle("POST /v1/patients/{id}/medication-logs", protected(s.authz.Authorize(
 		"medication_logs",
 		models.ScopeWriteMedications,

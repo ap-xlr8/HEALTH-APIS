@@ -34,6 +34,20 @@ func (f *fakeStore) ListRelationshipsForUser(ctx context.Context, userID, role s
 	return f.relationships, nil
 }
 
+func (f *fakeStore) FindUserByEmail(ctx context.Context, email string) (models.User, error) {
+	if f.err != nil {
+		return models.User{}, f.err
+	}
+	return models.User{ID: "usr_from_email", Email: email}, nil
+}
+
+func (f *fakeStore) FindUserByID(ctx context.Context, id string) (models.User, error) {
+	if f.err != nil {
+		return models.User{}, f.err
+	}
+	return models.User{ID: id}, nil
+}
+
 func TestAssignCaregiver(t *testing.T) {
 	store := &fakeStore{}
 	relationship, err := New(store).AssignCaregiver(context.Background(), " usr_patient ", " usr_caregiver ")

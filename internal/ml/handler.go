@@ -160,7 +160,10 @@ func (h Handler) DriftWebhook(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:         now,
 	}
 
-	_ = h.store.RecordMLDriftEvent(r.Context(), driftEvent)
+	if err := h.store.RecordMLDriftEvent(r.Context(), driftEvent); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "drift event persistence failed")
+		return
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "success",

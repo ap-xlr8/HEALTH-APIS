@@ -15,6 +15,7 @@ type Store interface {
 	CreateClinicalRecord(ctx context.Context, record models.ClinicalRecord) error
 	ListClinicalRecords(ctx context.Context, patientID string) ([]models.ClinicalRecord, error)
 	CreateMedication(ctx context.Context, medication models.Medication) error
+	UpdateMedicationStatus(ctx context.Context, patientID, medicationID, status string, active bool) error
 	DeleteMedication(ctx context.Context, patientID, medicationID string) error
 	ListMedications(ctx context.Context, patientID string) ([]models.Medication, error)
 	RecordMedicationLog(ctx context.Context, log models.MedicationLog) error
@@ -139,6 +140,13 @@ func (h Handler) CreateMedication(w http.ResponseWriter, r *http.Request) {
 		Schedule               string   `json:"schedule"`
 		Route                  string   `json:"route,omitempty"`
 		FrequencyDetails       string   `json:"frequency_details,omitempty"`
+		Instructions           string   `json:"instructions,omitempty"`
+		PrescribedBy           string   `json:"prescribed_by,omitempty"`
+		StartDate              string   `json:"start_date,omitempty"`
+		EndDate                string   `json:"end_date,omitempty"`
+		DurationDays           int      `json:"duration_days,omitempty"`
+		IsIndefinite           bool     `json:"is_indefinite,omitempty"`
+		Status                 string   `json:"status,omitempty"`
 		ComplementaryTherapies []string `json:"complementary_therapies,omitempty"`
 		Active                 *bool    `json:"active"`
 	}
@@ -155,6 +163,18 @@ func (h Handler) CreateMedication(w http.ResponseWriter, r *http.Request) {
 	if req.Active != nil {
 		active = *req.Active
 	}
+	status := "active"
+	if req.Status != "" {
+		status = req.Status
+	} else if !active {
+		status = "completed"
+	}
+
+	instructions := strings.TrimSpace(req.Instructions)
+	if instructions == "" {
+		instructions = strings.TrimSpace(req.FrequencyDetails)
+	}
+
 	now := time.Now().UTC()
 	id := randomID()
 	if id == "" {
@@ -168,7 +188,14 @@ func (h Handler) CreateMedication(w http.ResponseWriter, r *http.Request) {
 		Dosage:                 dosage,
 		Schedule:               schedule,
 		Route:                  strings.TrimSpace(req.Route),
-		FrequencyDetails:       strings.TrimSpace(req.FrequencyDetails),
+		FrequencyDetails:       instructions,
+		Instructions:           instructions,
+		PrescribedBy:           strings.TrimSpace(req.PrescribedBy),
+		StartDate:              strings.TrimSpace(req.StartDate),
+		EndDate:                strings.TrimSpace(req.EndDate),
+		DurationDays:           req.DurationDays,
+		IsIndefinite:           req.IsIndefinite,
+		Status:                 status,
 		ComplementaryTherapies: req.ComplementaryTherapies,
 		Active:                 active,
 		CalculatedAdherence:    100.0,
@@ -180,6 +207,35 @@ func (h Handler) CreateMedication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"status": "success", "data": medication})
+}
+
+func (h Handler) UpdateMedicationStatus(w http.ResponseWriter, r *http.Request) {
+	patientID := r.PathValue("id")
+	medicationID := r.PathValue("med_id")
+	if patientID == "" || medicationID == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "patient id and medication id are required")
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+		Active *bool  `json:"active"`
+	}
+	_ = httpx.DecodeJSON(r, &req)
+	status := strings.TrimSpace(req.Status)
+	if status == "" {
+		status = "completed"
+	}
+	active := false
+	if req.Active != nil {
+		active = *req.Active
+	} else if status == "active" {
+		active = true
+	}
+	if err := h.store.UpdateMedicationStatus(r.Context(), patientID, medicationID, status, active); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not update medication status")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "success", "message": "medication status updated"})
 }
 
 func (h Handler) DeleteMedication(w http.ResponseWriter, r *http.Request) {

@@ -18,13 +18,43 @@ func NewHandler(store Store) Handler {
 func (h Handler) AssignCaregiver(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CaregiverID string `json:"caregiver_id"`
+		PatientID   string `json:"patient_id"`
+		Identifier  string `json:"identifier"`
+		Email       string `json:"email"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 	claims, _ := authz.ClaimsFromContext(r.Context())
-	relationship, err := New(h.store).AssignCaregiver(r.Context(), claims.UserID, req.CaregiverID)
+	if claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	patientID := claims.UserID
+	caregiverID := req.CaregiverID
+	if caregiverID == "" {
+		if req.Email != "" {
+			caregiverID = req.Email
+		} else if req.Identifier != "" {
+			caregiverID = req.Identifier
+		}
+	}
+
+	if claims.Role == "caregiver" {
+		caregiverID = claims.UserID
+		patientID = req.PatientID
+		if patientID == "" {
+			if req.Email != "" {
+				patientID = req.Email
+			} else if req.Identifier != "" {
+				patientID = req.Identifier
+			}
+		}
+	}
+
+	relationship, err := New(h.store).AssignCaregiver(r.Context(), patientID, caregiverID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return

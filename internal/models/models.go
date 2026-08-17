@@ -39,6 +39,7 @@ type HealthProfile struct {
 	RhFactor         string            `bson:"rh_factor,omitempty" json:"rh_factor,omitempty"`
 	BirthDate        string            `bson:"birth_date,omitempty" json:"birth_date,omitempty"`
 	BiologicalSex    string            `bson:"biological_sex,omitempty" json:"biological_sex,omitempty"`
+	Gender           string            `bson:"gender,omitempty" json:"gender,omitempty"`
 	Phone            string            `bson:"phone,omitempty" json:"phone,omitempty"`
 	Address          string            `bson:"address,omitempty" json:"address,omitempty"`
 	EmergencyContact *EmergencyContact `bson:"emergency_contact,omitempty" json:"emergency_contact,omitempty"`
@@ -76,15 +77,15 @@ type NotificationPreferences struct {
 }
 
 type CaregiverProfile struct {
-	ProfessionalTitle string            `bson:"professional_title,omitempty" json:"professional_title,omitempty"`
-	LicenseNumber     string            `bson:"license_number,omitempty" json:"license_number,omitempty"`
-	Phone            string            `bson:"phone,omitempty" json:"phone,omitempty"`
-	Specialty        string            `bson:"specialty,omitempty" json:"specialty,omitempty"`
-	Organization     string            `bson:"organization,omitempty" json:"organization,omitempty"`
-	Bio              string            `bson:"bio,omitempty" json:"bio,omitempty"`
-	Shifts           map[string]any    `bson:"shifts,omitempty" json:"shifts,omitempty"`
-	NotificationChannels map[string]any `bson:"notification_channels,omitempty" json:"notification_channels,omitempty"`
-	EmergencyContact *EmergencyContact `bson:"emergency_contact,omitempty" json:"emergency_contact,omitempty"`
+	ProfessionalTitle    string            `bson:"professional_title,omitempty" json:"professional_title,omitempty"`
+	LicenseNumber        string            `bson:"license_number,omitempty" json:"license_number,omitempty"`
+	Phone                string            `bson:"phone,omitempty" json:"phone,omitempty"`
+	Specialty            string            `bson:"specialty,omitempty" json:"specialty,omitempty"`
+	Organization         string            `bson:"organization,omitempty" json:"organization,omitempty"`
+	Bio                  string            `bson:"bio,omitempty" json:"bio,omitempty"`
+	Shifts               map[string]any    `bson:"shifts,omitempty" json:"shifts,omitempty"`
+	NotificationChannels map[string]any    `bson:"notification_channels,omitempty" json:"notification_channels,omitempty"`
+	EmergencyContact     *EmergencyContact `bson:"emergency_contact,omitempty" json:"emergency_contact,omitempty"`
 }
 
 type User struct {
@@ -209,11 +210,16 @@ type BreakGlassRequest struct {
 }
 
 type Allergy struct {
+	ID                     string   `bson:"id,omitempty" json:"id,omitempty"`
 	Allergen               string   `bson:"allergen" json:"allergen"`
-	Type                   string   `bson:"type" json:"type"`
+	Category               string   `bson:"category,omitempty" json:"category,omitempty"`
+	Type                   string   `bson:"type,omitempty" json:"type,omitempty"`
 	Severity               string   `bson:"severity" json:"severity"`
-	ClinicalManifestations []string `bson:"clinical_manifestations" json:"clinical_manifestations"`
+	ClinicalManifestations []string `bson:"clinical_manifestations,omitempty" json:"clinical_manifestations,omitempty"`
+	ManifestationsText     string   `bson:"manifestations,omitempty" json:"manifestations,omitempty"`
+	DiagnosedDate          string   `bson:"diagnosed_date,omitempty" json:"diagnosed_date,omitempty"`
 	ReportedDate           string   `bson:"reported_date,omitempty" json:"reported_date,omitempty"`
+	Notes                  string   `bson:"notes,omitempty" json:"notes,omitempty"`
 }
 
 type PathologicalCondition struct {
@@ -272,6 +278,13 @@ type Medication struct {
 	Schedule               string    `bson:"schedule" json:"schedule"`
 	Route                  string    `bson:"route,omitempty" json:"route,omitempty"`
 	FrequencyDetails       string    `bson:"frequency_details,omitempty" json:"frequency_details,omitempty"`
+	Instructions           string    `bson:"instructions,omitempty" json:"instructions,omitempty"`
+	PrescribedBy           string    `bson:"prescribed_by,omitempty" json:"prescribed_by,omitempty"`
+	StartDate              string    `bson:"start_date,omitempty" json:"start_date,omitempty"`
+	EndDate                string    `bson:"end_date,omitempty" json:"end_date,omitempty"`
+	DurationDays           int       `bson:"duration_days,omitempty" json:"duration_days,omitempty"`
+	IsIndefinite           bool      `bson:"is_indefinite,omitempty" json:"is_indefinite,omitempty"`
+	Status                 string    `bson:"status,omitempty" json:"status,omitempty"`
 	ComplementaryTherapies []string  `bson:"complementary_therapies,omitempty" json:"complementary_therapies,omitempty"`
 	CalculatedAdherence    float64   `bson:"calculated_adherence,omitempty" json:"calculated_adherence,omitempty"`
 	Active                 bool      `bson:"active" json:"active"`

@@ -916,15 +916,15 @@ func (h Handler) GetCaregiverSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"id":                "cg_set_" + user.ID,
-		"userId":            user.ID,
-		"professionalTitle": title,
-		"licenseNumber":     license,
-		"specialty":         specialty,
-		"institution":       institution,
-		"shifts":              shifts,
+		"id":                   "cg_set_" + user.ID,
+		"userId":               user.ID,
+		"professionalTitle":    title,
+		"licenseNumber":        license,
+		"specialty":            specialty,
+		"institution":          institution,
+		"shifts":               shifts,
 		"notificationChannels": channels,
-		"assignedPatientIds": []string{},
+		"assignedPatientIds":   []string{},
 	})
 }
 
@@ -935,11 +935,11 @@ func (h Handler) UpdateCaregiverSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req struct {
-		ProfessionalTitle string `json:"professionalTitle"`
-		LicenseNumber     string `json:"licenseNumber"`
-		Specialty         string `json:"specialty"`
-		Institution       string `json:"institution"`
-		Shifts            map[string]any `json:"shifts"`
+		ProfessionalTitle    string         `json:"professionalTitle"`
+		LicenseNumber        string         `json:"licenseNumber"`
+		Specialty            string         `json:"specialty"`
+		Institution          string         `json:"institution"`
+		Shifts               map[string]any `json:"shifts"`
 		NotificationChannels map[string]any `json:"notificationChannels"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
