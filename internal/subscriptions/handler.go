@@ -125,6 +125,59 @@ func (h Handler) GetMyInvoices(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h Handler) GetPublicPlans(w http.ResponseWriter, r *http.Request) {
+	plans := []map[string]any{
+		{
+			"id":          "plan_basic",
+			"name":        "Plan Esencial",
+			"price":       "$0",
+			"period":      "Gratis",
+			"description": "Monitoreo biométrico básico para uso personal continuo.",
+			"features": []string{
+				"Sincronización de 1 wearable",
+				"Historial clínico básico",
+				"Alertas vitales inmediatas",
+			},
+			"buttonText": "Comenzar Gratis",
+			"highlight":  false,
+		},
+		{
+			"id":          "plan_pro",
+			"name":        "Plan Premium Clínico",
+			"price":       "$29",
+			"period":      "USD / mes",
+			"description": "Monitoreo avanzado con análisis predictivo ML y enlace a cuidadores.",
+			"features": []string{
+				"Wearables ilimitados",
+				"Modelos predictivos de arritmia y apnea",
+				"Acceso multi-cuidador y reportes PDF",
+				"Soporte prioritario 24/7",
+			},
+			"buttonText": "Comenzar Prueba de 14 Días",
+			"highlight":  true,
+		},
+		{
+			"id":          "plan_enterprise",
+			"name":        "Plan Institucional",
+			"price":       "Contactar",
+			"period":      "A medida",
+			"description": "Para hospitales, aseguradoras y redes de atención médica.",
+			"features": []string{
+				"Integración HL7 / FHIR directa",
+				"Portal de telemetría masiva",
+				"SLA del 99.99% y soporte dedicado",
+				"Despliegue On-Premise o Cloud dedicado",
+			},
+			"buttonText": "Hablar con Ventas",
+			"highlight":  false,
+		},
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status": "success",
+		"data":   plans,
+	})
+}
+
 func verifyStripeSignature(header string, body []byte, secret string, tolerance time.Duration) error {
 	if strings.TrimSpace(secret) == "" {
 		return errors.New("missing webhook secret")

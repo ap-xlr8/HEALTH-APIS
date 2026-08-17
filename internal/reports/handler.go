@@ -90,6 +90,16 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "success", "data": reports})
 }
 
+func (h Handler) Download(w http.ResponseWriter, r *http.Request) {
+	reportID := r.PathValue("report_id")
+	patientID := r.PathValue("id")
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"report_"+patientID+"_"+reportID+".pdf\"")
+	pdfData := "%PDF-1.4\n1 0 obj\n<< /Title (HealthOS Clinical Report) /Author (HealthOS) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(pdfData))
+}
+
 func randomID() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {

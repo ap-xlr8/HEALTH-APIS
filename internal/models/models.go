@@ -90,6 +90,8 @@ type User struct {
 	Preferences             *UserPreferences         `bson:"preferences,omitempty" json:"preferences,omitempty"`
 	NotificationPreferences *NotificationPreferences `bson:"notification_preferences,omitempty" json:"notification_preferences,omitempty"`
 	ActiveConditions        []string                 `bson:"active_conditions,omitempty" json:"active_conditions,omitempty"`
+	Status                  string                   `bson:"status,omitempty" json:"status,omitempty"`
+	LastLogin               *time.Time               `bson:"last_login,omitempty" json:"last_login,omitempty"`
 	EmailVerified           bool                     `bson:"email_verified" json:"email_verified"`
 	VerificationToken       string                   `bson:"verification_token,omitempty" json:"-"`
 	VerificationExpiresAt   *time.Time               `bson:"verification_expires_at,omitempty" json:"-"`

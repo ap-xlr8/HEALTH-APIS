@@ -15,6 +15,7 @@ type Store interface {
 	CreateClinicalRecord(ctx context.Context, record models.ClinicalRecord) error
 	ListClinicalRecords(ctx context.Context, patientID string) ([]models.ClinicalRecord, error)
 	CreateMedication(ctx context.Context, medication models.Medication) error
+	DeleteMedication(ctx context.Context, patientID, medicationID string) error
 	ListMedications(ctx context.Context, patientID string) ([]models.Medication, error)
 	RecordMedicationLog(ctx context.Context, log models.MedicationLog) error
 	CalculateMedicationAdherence(ctx context.Context, patientID, medicationID string) (float64, error)
@@ -179,6 +180,20 @@ func (h Handler) CreateMedication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"status": "success", "data": medication})
+}
+
+func (h Handler) DeleteMedication(w http.ResponseWriter, r *http.Request) {
+	patientID := r.PathValue("id")
+	medicationID := r.PathValue("med_id")
+	if patientID == "" || medicationID == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "patient id and medication id are required")
+		return
+	}
+	if err := h.store.DeleteMedication(r.Context(), patientID, medicationID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not delete medication")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "success", "message": "medication deleted"})
 }
 
 func (h Handler) ListMedications(w http.ResponseWriter, r *http.Request) {

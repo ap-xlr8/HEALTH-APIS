@@ -21,6 +21,16 @@ func (f *fakeStore) UpsertConsent(ctx context.Context, consent models.Consent) e
 	return nil
 }
 
+func (f *fakeStore) ListConsents(ctx context.Context, patientID, caregiverID string) ([]models.Consent, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.consent.ID != "" {
+		return []models.Consent{f.consent}, nil
+	}
+	return []models.Consent{}, nil
+}
+
 type fakeBroadcaster struct {
 	events []any
 }

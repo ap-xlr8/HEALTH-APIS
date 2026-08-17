@@ -51,7 +51,16 @@ func (h Handler) RegisterWearable(w http.ResponseWriter, r *http.Request) {
 
 func (h Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	claims, _ := authz.ClaimsFromContext(r.Context())
-	devices, err := h.store.ListDevices(r.Context(), claims.UserID)
+	targetID := ""
+	if claims != nil {
+		targetID = claims.UserID
+	}
+	if pathID := strings.TrimSpace(r.PathValue("id")); pathID != "" {
+		targetID = pathID
+	} else if queryID := strings.TrimSpace(r.URL.Query().Get("patientId")); queryID != "" {
+		targetID = queryID
+	}
+	devices, err := h.store.ListDevices(r.Context(), targetID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not list devices")
 		return

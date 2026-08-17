@@ -11,6 +11,7 @@ import (
 
 type HandlerStore interface {
 	UpsertConsent(ctx context.Context, consent models.Consent) error
+	ListConsents(ctx context.Context, patientID, caregiverID string) ([]models.Consent, error)
 }
 
 type Handler struct {
@@ -20,6 +21,27 @@ type Handler struct {
 
 func NewHandler(store HandlerStore, broadcaster Broadcaster) Handler {
 	return Handler{store: store, broadcaster: broadcaster}
+}
+
+func (h Handler) List(w http.ResponseWriter, r *http.Request) {
+	claims, _ := authz.ClaimsFromContext(r.Context())
+	patientID := r.URL.Query().Get("patientId")
+	caregiverID := r.URL.Query().Get("caregiverId")
+
+	if claims != nil {
+		if claims.Role == models.RolePatient {
+			patientID = claims.UserID
+		} else if claims.Role == models.RoleCaregiver {
+			caregiverID = claims.UserID
+		}
+	}
+
+	consents, err := h.store.ListConsents(r.Context(), patientID, caregiverID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "failed to list consents")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "success", "data": consents})
 }
 
 func (h Handler) Grant(w http.ResponseWriter, r *http.Request) {

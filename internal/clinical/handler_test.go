@@ -46,6 +46,13 @@ func (f *fakeClinicalStore) CreateMedication(ctx context.Context, medication mod
 	return nil
 }
 
+func (f *fakeClinicalStore) DeleteMedication(ctx context.Context, patientID, medicationID string) error {
+	if f.err != nil {
+		return f.err
+	}
+	return nil
+}
+
 func (f *fakeClinicalStore) ListMedications(ctx context.Context, patientID string) ([]models.Medication, error) {
 	if f.err != nil {
 		return nil, f.err

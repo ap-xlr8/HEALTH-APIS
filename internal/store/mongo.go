@@ -517,6 +517,11 @@ func (m *Mongo) CreateMedication(ctx context.Context, medication models.Medicati
 	return err
 }
 
+func (m *Mongo) DeleteMedication(ctx context.Context, patientID, medicationID string) error {
+	_, err := m.db.Collection("medications").DeleteOne(ctx, bson.M{"_id": medicationID, "patient_id": patientID})
+	return err
+}
+
 func (m *Mongo) ListMedications(ctx context.Context, patientID string) ([]models.Medication, error) {
 	cursor, err := m.db.Collection("medications").Find(ctx, bson.M{"patient_id": patientID}, options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}))
 	if err != nil {
@@ -996,6 +1001,95 @@ func (m *Mongo) GetLatestMLDriftEvent(ctx context.Context, modelName string) (mo
 	opts := options.FindOne().SetSort(bson.D{{Key: "triggered_at", Value: -1}})
 	err := m.db.Collection("ml_drift_events").FindOne(ctx, bson.M{"model_name": modelName}, opts).Decode(&event)
 	return event, normalizeFindErr(err)
+}
+
+func (m *Mongo) ListUsers(ctx context.Context, role, status string, limit int64) ([]models.User, error) {
+	filter := bson.M{}
+	if role != "" {
+		filter["role"] = role
+	}
+	if status != "" {
+		filter["status"] = status
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	opts := options.Find().SetLimit(limit).SetSort(bson.D{{Key: "created_at", Value: -1}})
+	cursor, err := m.db.Collection("users").Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var users []models.User
+	if err := cursor.All(ctx, &users); err != nil {
+		return nil, err
+	}
+	if users == nil {
+		users = []models.User{}
+	}
+	return users, nil
+}
+
+func (m *Mongo) UpdateUserStatus(ctx context.Context, userID, status string) error {
+	res, err := m.db.Collection("users").UpdateOne(ctx, bson.M{"_id": userID}, bson.M{"$set": bson.M{"status": status}})
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (m *Mongo) ListAuditLogs(ctx context.Context, userID, action string, limit int64) ([]models.AuditLog, error) {
+	filter := bson.M{}
+	if userID != "" {
+		filter["user_id"] = userID
+	}
+	if action != "" {
+		filter["action"] = action
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	opts := options.Find().SetLimit(limit).SetSort(bson.D{{Key: "created_at", Value: -1}})
+	cursor, err := m.db.Collection("audit_logs").Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var logs []models.AuditLog
+	if err := cursor.All(ctx, &logs); err != nil {
+		return nil, err
+	}
+	if logs == nil {
+		logs = []models.AuditLog{}
+	}
+	return logs, nil
+}
+
+func (m *Mongo) ListConsents(ctx context.Context, patientID, caregiverID string) ([]models.Consent, error) {
+	filter := bson.M{"revoked": false}
+	if patientID != "" {
+		filter["patient_id"] = patientID
+	}
+	if caregiverID != "" {
+		filter["caregiver_id"] = caregiverID
+	}
+	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
+	cursor, err := m.db.Collection("consents").Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var consents []models.Consent
+	if err := cursor.All(ctx, &consents); err != nil {
+		return nil, err
+	}
+	if consents == nil {
+		consents = []models.Consent{}
+	}
+	return consents, nil
 }
 
 func normalizeFindErr(err error) error {

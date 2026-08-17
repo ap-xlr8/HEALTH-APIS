@@ -204,10 +204,16 @@ func (h Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {
 		if rh, ok := bp["rhFactor"].(string); ok && rh != "" {
 			rhFactor = rh
 		}
+		if len(bloodType) > 0 && !strings.Contains(bloodType, "+") && !strings.Contains(bloodType, "-") && rhFactor != "" {
+			bloodType = bloodType + rhFactor
+		}
 		if ec, ok := bp["primaryEmergencyContact"].(map[string]any); ok {
 			name, _ := ec["name"].(string)
 			phoneNum, _ := ec["phone"].(string)
 			rel, _ := ec["relation"].(string)
+			if rel == "" {
+				rel, _ = ec["relationship"].(string)
+			}
 			emergencyContact = &models.EmergencyContact{
 				Name:         name,
 				Phone:        phoneNum,
@@ -227,6 +233,9 @@ func (h Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {
 		if rh, ok := rawMap["rh_factor"].(string); ok && rh != "" {
 			rhFactor = rh
 		}
+		if len(bloodType) > 0 && !strings.Contains(bloodType, "+") && !strings.Contains(bloodType, "-") && rhFactor != "" {
+			bloodType = bloodType + rhFactor
+		}
 		if bd, ok := rawMap["birth_date"].(string); ok {
 			birthDate = bd
 		}
@@ -238,6 +247,19 @@ func (h Handler) UpdateHealthProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		if addr, ok := rawMap["address"].(string); ok {
 			address = addr
+		}
+		if ec, ok := rawMap["emergency_contact"].(map[string]any); ok {
+			name, _ := ec["name"].(string)
+			phoneNum, _ := ec["phone"].(string)
+			rel, _ := ec["relationship"].(string)
+			if rel == "" {
+				rel, _ = ec["relation"].(string)
+			}
+			emergencyContact = &models.EmergencyContact{
+				Name:         name,
+				Phone:        phoneNum,
+				Relationship: rel,
+			}
 		}
 	}
 

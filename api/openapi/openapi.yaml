@@ -381,6 +381,114 @@ paths:
                 items:
                   type: object
         '401': { $ref: '#/components/responses/Error' }
+  /v1/public/plans:
+    get:
+      tags: [SUSCRIPCIONES]
+      summary: Catalogo publico de planes de suscripcion
+      responses:
+        '200':
+          description: Lista de planes disponibles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  data: { type: array, items: { type: object } }
+  /v1/admin/users:
+    get:
+      tags: [ADMIN]
+      summary: Listado de usuarios para administradores
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Lista de usuarios
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  data: { type: array, items: { type: object } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/admin/users/{id}/suspend:
+    post:
+      tags: [ADMIN]
+      summary: Suspender o reactivar usuario
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [active, suspended] }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Estado de usuario actualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/admin/users/{id}/activity:
+    get:
+      tags: [ADMIN]
+      summary: Registro de actividad de un usuario
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Logs de actividad
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  data: { type: array, items: { type: object } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/admin/audit:
+    get:
+      tags: [ADMIN]
+      summary: Logs de auditoria del sistema
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Logs de auditoria
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  data: { type: array, items: { type: object } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /v1/admin/break-glass/request:
     post:
       tags: [ADMIN]
@@ -666,6 +774,44 @@ paths:
                   status: { type: string }
                   message: { type: string }
                   data: { $ref: '#/components/schemas/CaregiverProfile' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/caregiver/settings:
+    get:
+      tags: [CAREGIVER]
+      summary: Obtener configuraciones profesionales y guardias del cuidador
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Configuraciones del cuidador
+          content:
+            application/json:
+              schema:
+                type: object
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [CAREGIVER]
+      summary: Actualizar configuraciones profesionales y guardias del cuidador
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Configuraciones actualizadas
+          content:
+            application/json:
+              schema:
+                type: object
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
@@ -976,6 +1122,32 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/medications/{med_id}:
+    delete:
+      tags: [CLINICAL]
+      summary: Eliminar medicamento del pastillero
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+        - name: med_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Medicamento eliminado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: success }
+                  message: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /v1/patients/{id}/medication-logs:
     post:
       tags: [CLINICAL]
@@ -1043,7 +1215,70 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/reports/{report_id}/download:
+    get:
+      tags: [REPORTS]
+      summary: Descargar reporte clinico en formato PDF
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+        - name: report_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Archivo PDF del reporte
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/patients/{id}/devices:
+    get:
+      tags: [DISPOSITIVOS]
+      summary: Listar dispositivos wearable vinculados a un paciente
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PatientID'
+      responses:
+        '200':
+          description: Lista de dispositivos del paciente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  data: { type: array, items: { $ref: '#/components/schemas/Device' } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /v1/consents:
+    get:
+      tags: [CONSENT]
+      summary: Listar consentimientos activos
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Lista de consentimientos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  data: { type: array, items: { type: object } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
     post:
       tags: [CONSENT]
       summary: Otorgar scopes granulares de paciente a cuidador

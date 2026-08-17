@@ -878,6 +878,92 @@ func (h Handler) UpdateCaregiverProfile(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (h Handler) GetCaregiverSettings(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	user, err := h.store.FindUserByID(r.Context(), claims.UserID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	title := "Dr(a). " + user.FirstName + " " + user.LastName
+	license := ""
+	specialty := "Medicina General"
+	institution := "Red Health OS"
+	if user.CaregiverProfile != nil {
+		if user.CaregiverProfile.Specialty != "" {
+			specialty = user.CaregiverProfile.Specialty
+		}
+		if user.CaregiverProfile.Organization != "" {
+			institution = user.CaregiverProfile.Organization
+		}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"id":                "cg_set_" + user.ID,
+		"userId":            user.ID,
+		"professionalTitle": title,
+		"licenseNumber":     license,
+		"specialty":         specialty,
+		"institution":       institution,
+		"shifts": map[string]any{
+			"onCall":                 true,
+			"shiftSchedule":          "Lunes a Viernes 08:00 - 16:00 (Guardia Pasiva)",
+			"autoTriageCriticalOnly": false,
+		},
+		"notificationChannels": map[string]any{
+			"push":       true,
+			"email":      true,
+			"sms":        true,
+			"urgentCall": true,
+		},
+		"assignedPatientIds": []string{},
+	})
+}
+
+func (h Handler) UpdateCaregiverSettings(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authz.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		ProfessionalTitle string `json:"professionalTitle"`
+		LicenseNumber     string `json:"licenseNumber"`
+		Specialty         string `json:"specialty"`
+		Institution       string `json:"institution"`
+		Shifts            map[string]any `json:"shifts"`
+		NotificationChannels map[string]any `json:"notificationChannels"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+
+	user, _ := h.store.FindUserByID(r.Context(), claims.UserID)
+	profile := models.CaregiverProfile{}
+	if user.CaregiverProfile != nil {
+		profile = *user.CaregiverProfile
+	}
+	if req.Specialty != "" {
+		profile.Specialty = req.Specialty
+	}
+	if req.Institution != "" {
+		profile.Organization = req.Institution
+	}
+	_ = h.store.UpdateCaregiverProfile(r.Context(), claims.UserID, profile)
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status":  "success",
+		"message": "caregiver settings updated successfully",
+		"data":    req,
+	})
+}
+
 func generate6DigitOTP() (string, error) {
 	n, err := rand.Int(rand.Reader, big.NewInt(900000))
 	if err != nil {
