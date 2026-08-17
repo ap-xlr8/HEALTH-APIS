@@ -509,7 +509,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("DELETE /v1/consents/{caregiver_id}", protected(s.authz.Authorize(
 		"consents",
 		models.ScopeWriteConsent,
-		[]string{models.RolePatient},
+		[]string{models.RolePatient, models.RoleCaregiver, models.RoleAdmin},
 		func(r *http.Request) string {
 			if claims, ok := authz.ClaimsFromContext(r.Context()); ok {
 				return claims.UserID

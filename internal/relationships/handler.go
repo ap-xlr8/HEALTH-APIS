@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"healthos/backend/internal/authz"
+	"healthos/backend/internal/models"
 	"healthos/backend/pkg/httpx"
 )
 
@@ -66,7 +67,25 @@ func (h Handler) AssignCaregiver(w http.ResponseWriter, r *http.Request) {
 
 func (h Handler) RevokeCaregiver(w http.ResponseWriter, r *http.Request) {
 	claims, _ := authz.ClaimsFromContext(r.Context())
-	relationship, err := New(h.store).RevokeCaregiver(r.Context(), claims.UserID, r.PathValue("caregiver_id"))
+	if claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	targetID := r.PathValue("caregiver_id")
+	if targetID == "" {
+		targetID = r.PathValue("id")
+	}
+
+	patientID := claims.UserID
+	caregiverID := targetID
+
+	if claims.Role == models.RoleCaregiver {
+		caregiverID = claims.UserID
+		patientID = targetID
+	}
+
+	relationship, err := New(h.store).RevokeCaregiver(r.Context(), patientID, caregiverID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return

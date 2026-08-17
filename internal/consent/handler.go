@@ -64,7 +64,25 @@ func (h Handler) Grant(w http.ResponseWriter, r *http.Request) {
 
 func (h Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 	claims, _ := authz.ClaimsFromContext(r.Context())
-	consent, err := New(h.store, h.broadcaster).Revoke(r.Context(), claims.UserID, r.PathValue("caregiver_id"))
+	if claims == nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	targetID := r.PathValue("caregiver_id")
+	if targetID == "" {
+		targetID = r.PathValue("id")
+	}
+
+	patientID := claims.UserID
+	caregiverID := targetID
+
+	if claims.Role == models.RoleCaregiver {
+		caregiverID = claims.UserID
+		patientID = targetID
+	}
+
+	consent, err := New(h.store, h.broadcaster).Revoke(r.Context(), patientID, caregiverID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
