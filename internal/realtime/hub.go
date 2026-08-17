@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -50,11 +49,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) {
 		},
 		Subprotocols: []string{"healthos"},
 	}
-	responseHeader := http.Header{}
-	if wsProto := r.Header.Get("Sec-WebSocket-Protocol"); strings.Contains(wsProto, "healthos") {
-		responseHeader.Set("Sec-WebSocket-Protocol", "healthos")
-	}
-	conn, err := upgrader.Upgrade(w, r, responseHeader)
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}

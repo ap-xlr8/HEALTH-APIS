@@ -347,12 +347,82 @@ type MLDriftEvent struct {
 }
 
 type BiometricEstimations struct {
-	PatientID          string    `json:"patient_id"`
-	EstimatedGlucose   float64   `json:"estimated_glucose_mg_dl"`
-	StressIndex        float64   `json:"stress_index"`
-	VO2Max             float64   `json:"vo2_max_ml_kg_min"`
-	RecoveryScore      float64   `json:"recovery_score"`
-	Confidence         float64   `json:"confidence"`
-	ClinicalDisclaimer string    `json:"clinical_disclaimer"`
-	EvaluatedAt        time.Time `json:"evaluated_at"`
+	PatientID          string                                 `json:"patient_id"`
+	EstimatedGlucose   float64                                `json:"estimated_glucose_mg_dl"`
+	StressIndex        float64                                `json:"stress_index"`
+	VO2Max             float64                                `json:"vo2_max_ml_kg_min"`
+	RecoveryScore      float64                                `json:"recovery_score"`
+	Confidence         float64                                `json:"confidence"`
+	ClinicalDisclaimer string                                 `json:"clinical_disclaimer"`
+	EvaluatedAt        time.Time                              `json:"evaluated_at"`
+	Cardiovascular     *CardiovascularRiskEstimate            `json:"cardiovascular,omitempty"`
+	Glucose            *GlucoseMetabolicPattern               `json:"glucose,omitempty"`
+	StressFatigue      *StressFatigueEstimate                 `json:"stressFatigue,omitempty"`
+	SleepApnea         *SleepApneaEstimate                    `json:"sleepApnea,omitempty"`
+	Arrhythmias        []ArrhythmiaEvent                      `json:"arrhythmias,omitempty"`
+	InfectionAlert     *InfectionDetectionAlert               `json:"infectionAlert,omitempty"`
+	ArterialStiffness  *HypertensionArterialStiffnessEstimate `json:"arterialStiffness,omitempty"`
 }
+
+type CardiovascularRiskEstimate struct {
+	RiskScorePercent     float64 `json:"riskScorePercent"`
+	RiskCategory         string  `json:"riskCategory"`
+	EstimatedVO2Max      float64 `json:"estimatedVo2Max"`
+	AssessmentDate       string  `json:"assessmentDate"`
+	ConfidenceScore      float64 `json:"confidenceScore"`
+	RegulatoryDisclaimer string  `json:"regulatoryDisclaimer"`
+}
+
+type GlucoseMetabolicPattern struct {
+	AverageFastingGlucose    float64 `json:"averageFastingGlucose"`
+	PostprandialSpikeRisk    string  `json:"postprandialSpikeRisk"`
+	GlycemicVariabilityIndex float64 `json:"glycemicVariabilityIndex"`
+	Trend                    string  `json:"trend"`
+	LastEvaluatedAt          string  `json:"lastEvaluatedAt"`
+}
+
+type StressFatigueEstimate struct {
+	StressScore             float64 `json:"stressScore"`
+	CNSFatigueLevel         string  `json:"cnsFatigueLevel"`
+	MorningHrvRmssd         float64 `json:"morningHrvRmssd"`
+	SympatheticBalanceRatio float64 `json:"sympatheticBalanceRatio"`
+	Recommendation          string  `json:"recommendation"`
+}
+
+type SleepApneaEstimate struct {
+	OxygenDesaturationIndex  float64 `json:"oxygenDesaturationIndex"`
+	NocturnalHypoxemiaEvents int     `json:"nocturnalHypoxemiaEvents"`
+	MinNocturnalSpO2         float64 `json:"minNocturnalSpo2"`
+	Severity                 string  `json:"severity"`
+	MonitoringDate           string  `json:"monitoringDate"`
+}
+
+type ArrhythmiaEvent struct {
+	ID                     string `json:"id"`
+	EventType              string `json:"eventType"`
+	EventLabel             string `json:"eventLabel"`
+	Timestamp              string `json:"timestamp"`
+	DurationSeconds        int    `json:"durationSeconds"`
+	PeakHeartRate          int    `json:"peakHeartRate"`
+	Severity               string `json:"severity"`
+	ClinicalRecommendation string `json:"clinicalRecommendation"`
+}
+
+type InfectionDetectionAlert struct {
+	IsActive                  bool    `json:"isActive"`
+	AlertLevel                string  `json:"alertLevel"`
+	BasalTemperatureCelsius   float64 `json:"basalTemperatureCelsius"`
+	BasalTemperatureDeviation float64 `json:"basalTemperatureDeviation"`
+	RestingHeartRateBpm       int     `json:"restingHeartRateBpm"`
+	RestingHeartRateDeviation int     `json:"restingHeartRateDeviation"`
+	Message                   string  `json:"message"`
+	DetectedAt                string  `json:"detectedAt,omitempty"`
+}
+
+type HypertensionArterialStiffnessEstimate struct {
+	PulseTransitTimeMs        float64 `json:"pulseTransitTimeMs"`
+	ArterialStiffnessCategory string  `json:"arterialStiffnessCategory"`
+	HypertensionRiskIndex     float64 `json:"hypertensionRiskIndex"`
+	VascularAgeEstimateYears  int     `json:"vascularAgeEstimateYears"`
+}
+
